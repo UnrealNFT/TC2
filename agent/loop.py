@@ -28,11 +28,20 @@ def executer(action: dict) -> str:
         return f"Erreur {nom}: {e}"
 
 
-def boucle(objectif: str, max_tours: int = 40, commit_chaque: int = 5, callback=None):
-    """Boucle agentique principale. callback(tour, action, resultat) optionnel (UI/log)."""
+def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=None):
+    """Boucle agentique principale. 
+    max_tours=0 signifie illimité (tourne jusqu'à 'done').
+    callback(tour, action, resultat) optionnel (UI/log).
+    """
     historique = []
     tours_sans_commit = 0
-    for tour in range(1, max_tours + 1):
+    tour = 0
+
+    while True:
+        tour += 1
+        if max_tours > 0 and tour > max_tours:
+            return f"Max tours atteint ({max_tours}). Relancer pour continuer."
+
         contexte = tools.list_files()
         action = brain.decider(objectif, historique, contexte)
         nom = action.get("action", "?")
@@ -58,9 +67,7 @@ def boucle(objectif: str, max_tours: int = 40, commit_chaque: int = 5, callback=
             historique.append(("commit_push auto", tools.commit_push(msg)[:200]))
             tours_sans_commit = 0
 
-        time.sleep(1)  # menage les modeles locaux
-
-    return f"Max tours atteint ({max_tours}). Relancer pour continuer."
+        time.sleep(1)  # ménage les modèles locaux
 
 
 if __name__ == "__main__":

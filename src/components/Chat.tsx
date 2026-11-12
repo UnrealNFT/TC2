@@ -117,7 +117,7 @@ Format à utiliser :
       try {
         const res = await axios.post('http://localhost:8000/agent/run', {
           objectif,
-        }, { timeout: 300000 })
+        }, { timeout: 0 })
 
         return res.data.resume || 'Agent terminé'
       } catch (e: any) {
