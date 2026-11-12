@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarketPlace - Le meilleur des produits</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f8fafc; }
+        .header { background: #1e293b; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .header nav a { color: #fff; text-decoration: none; margin: 0 1rem; font-weight: 500; }
+        .header .logo { color: #60a5fa; font-size: 1.5rem; font-weight: bold; }
+        .hero { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 4rem 2rem; text-align: center; color: white; }
+        .hero h1 { font-size: 2.5rem; margin-bottom: 1rem; }
+        .hero p { font-size: 1.2rem; opacity: 0.9; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 2rem; }
+        .section-title { font-size: 2rem; margin-bottom: 2rem; color: #1e293b; }
+        .products { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 2rem; }
+        .product-card { background: white; border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.07); transition: transform 0.3s; }
+        .product-card:hover { transform: translateY(-5px); }
+        .product-card img { width: 100%; height: 200px; object-fit: cover; }
+        .product-card .content { padding: 1.5rem; }
+        .product-card .price { color: #667eea; font-weight: bold; font-size: 1.3rem; }
+        .product-card .title { font-size: 1.1rem; margin: 0.5rem 0; color: #1e293b; }
+        .product-card .description { color: #64748b; font-size: 0.9rem; margin: 0.5rem 0; }
+        .product-card .btn { display: inline-block; background: #667eea; color: white; padding: 0.7rem 1.5rem; border-radius: 0.5rem; text-decoration: none; margin-top: 1rem; transition: background 0.3s; }
+        .product-card .btn:hover { background: #5b6fe6; }
+        .features { background: #f1f5f9; padding: 4rem 2rem; margin-top: 4rem; }
+        .features .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2rem; max-width: 1200px; margin: 0 auto; }
+        .feature-item { text-align: center; padding: 2rem; background: white; border-radius: 1rem; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .feature-item .icon { font-size: 3rem; margin-bottom: 1rem; }
+        .feature-item h3 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .feature-item p { color: #64748b; }
+        .footer { background: #1e293b; color: white; padding: 3rem 2rem 1rem; margin-top: 4rem; }
+        .footer .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2rem; max-width: 1200px; margin: 0 auto; }
+        .footer h4 { margin-bottom: 1rem; }
+        .footer ul { list-style: none; }
+        .footer ul li { margin-bottom: 0.5rem; }
+        .footer ul li a { color: #94a3b8; text-decoration: none; }
+        .footer ul li a:hover { color: white; }
+        .footer .copyright { text-align: center; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #334155; color: #64748b; }
+        @media (max-width: 768px) { .grid { grid-template-columns: 1fr; }
+        .header nav { display: none; }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <nav>
+            <a href="#">Accueil</a>
+            <a href="#produits">Produits</a>
+            <a href="#features">Fonctionnalités</a>
+            <a href="#contact">Contact</a>
+        </nav>
+        <div class="logo">MarketPlace</div>
+    </header>
+
+    <section class="hero">
+        <h1>Le meilleur des produits, à portée de clic</h1>
+        <p>Découvrez notre sélection exclusive de produits de qualité supérieure</p>
+    </section>
+
+    <section class="container" id="produits">
+        <h2 class="section-title">Nos Produits Vedettes</h2>
+        <div class="products">
+            <div class="product-card">
+                <img src="https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=400" alt="Sneakers">
+                <div class="content">
+                    <h3 class="title">Sneakers Nike Air</h3>
+                    <p class="description">Confort ultime pour chaque pas</p>
+                    <p class="price">129.99 €</p>
+                    <a href="#" class="btn">Ajouter au panier</a>
+                </div>
+            </div>
+            <div class="product-card">
+                <img src="https://images.unsplash.com/photo-1523275335688-9742749ef827?w=400" alt="Montre">
+                <div class="content">
+                    <h3 class="title">Montre Minimaliste</h3>
+                    <p class="description">Élégance et précision</p>
+                    <p class="price">249.99 €</p>
+                    <a href="#" class="btn">Ajouter au panier</a>
+                </div>
+            </div>
+            <div class="product-card">
+                <img src="https://images.unsplash.com/photo-1505740429966-13d901095277?w=400" alt="Casque">
+                <div class="content">
+                    <h3 class="title">Casque Audio Pro</h3>
+                    <p class="description">Son immersif haute fidélité</p>
+                    <p class="price">199.99 €</p>
+                    <a href="#" class="btn">Ajouter au panier</a>
+                </div>
+            </div>
+            <div class="product-card">
+                <img src="https://images.unsplash.com/photo-1579546929514-7c75789e85e4?w=400" alt="Sweat">
+                <div class="content">
+                    <h3 class="title">Sweat Coton Premium</h3>
+                    <p class="description">Confort et style quotidien</p>
+                    <p class="price">59.99 €</p>
+                    <a href="#" class="btn">Ajouter au panier</a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="features" id="features">
+        <div class="grid">
+            <div class="feature-item">
+                <div class="icon">🚀</div>
+                <h3>Livraison Rapide</h3>
+                <p>Recevez vos commandes en 24/48h partout en France</p>
+            </div>
+            <div class="feature-item">
+                <div class="icon">🛡️</div>
+                <h3>Garantie Satisfait</h3>
+                <p>30 jours pour changer d'avis, sans frais</p>
+            </div>
+            <div class="feature-item">
+                <div class="icon">💳</div>
+                <h3>Paiement Sécurisé</h3>
+                <p>Transactions cryptées et protégées</p>
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer" id="contact">
+        <div class="grid">
+            <div>
+                <h4>À propos</h4>
+                <p>MarketPlace est votre destination de confiance pour des produits de qualité supérieure.</p>
+            </div>
+            <div>
+                <h4>Liens Utiles</h4>
+                <ul>
+                    <li><a href="#">Nos produits</a></li>
+                    <li><a href="#">Promotions</a></li>
+                    <li><a href="#">Blog</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>Support</h4>
+                <ul>
+                    <li><a href="#">FAQ</a></li>
+                    <li><a href="#">Contact</a></li>
+                    <li><a href="#">Retours</a></li>
+                </ul>
+            </div>
+            <div>
+                <h4>Newsletter</h4>
+                <p>Restez informé de nos dernières offres</p>
+            </div>
+        </div>
+        <div class="copyright">
+            &copy; 2024 MarketPlace. Tous droits réservés.
+        </div>
+    </footer>
+</body>
+</html>
