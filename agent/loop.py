@@ -1,8 +1,9 @@
-"""Boucle autonome : planifier -> agir -> observer -> recommencer."""
+"""Boucle autonome : amélioration continue permanente."""
 import json, os, time
 from . import brain, tools
 
 LOG_DIR = os.path.join(tools.ROOT, ".agent")
+STOP_FILE = os.path.join(LOG_DIR, "STOP")
 
 
 def _log(entry: dict):
@@ -12,7 +13,6 @@ def _log(entry: dict):
 
 
 def executer(action: dict) -> str:
-    """Execute une action via tools.TOOLS. Renvoie le resultat texte."""
     nom = action.get("action", "")
     args = action.get("args", {}) or {}
     if nom == "commit_push":
@@ -29,45 +29,68 @@ def executer(action: dict) -> str:
 
 
 def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=None):
-    """Boucle agentique principale. 
-    max_tours=0 signifie illimité (tourne jusqu'à 'done').
-    callback(tour, action, resultat) optionnel (UI/log).
-    """
     historique = []
     tours_sans_commit = 0
     tour = 0
+    erreurs_json = 0
+    objectif_actuel = objectif
 
-    while True:
+    while not os.path.exists(STOP_FILE):
         tour += 1
         if max_tours > 0 and tour > max_tours:
-            return f"Max tours atteint ({max_tours}). Relancer pour continuer."
+            return f"Max tours atteint ({max_tours})."
 
         contexte = tools.list_files()
-        action = brain.decider(objectif, historique, contexte)
+        action = brain.decider(objectif_actuel, historique, contexte)
         nom = action.get("action", "?")
+        pensee = action.get("pensee", "")
 
+        # Gestion des erreurs JSON
+        if nom == "done" and any(x in pensee for x in ["JSON invalide", "Pas de JSON"]):
+            erreurs_json += 1
+            if erreurs_json < 4:
+                if callback:
+                    callback(tour, action, "Format invalide, nouvel essai...")
+                time.sleep(1)
+                continue
+            erreurs_json = 0
+
+        erreurs_json = 0
+
+        # Au lieu de s'arrêter sur "done", on passe en mode amélioration continue
         if nom == "done":
-            resume = action.get("args", {}).get("resume", "termine")
-            _log({"tour": tour, "done": resume})
+            resume = action.get("args", {}).get("resume", "amélioration")
+            _log({"tour": tour, "amelioration": resume})
             if callback:
-                callback(tour, action, resume)
-            return resume
+                callback(tour, action, f"Amélioration continue : {resume}")
 
+            # On se donne un nouvel objectif d'amélioration
+            objectif_actuel = (
+                f"Continue d'améliorer le projet. "
+                f"Dernière action : {resume}. "
+                f"Ajoute des détails, optimise, améliore le design ou les fonctionnalités."
+            )
+            historique.append(("amélioration continue", resume[:200]))
+            time.sleep(2)
+            continue
+
+        # Action normale
         resultat = executer(action)
-        critique = brain.verifier(objectif, action, resultat)
-        historique.append((f"{nom} {action.get('args', {})}", resultat[:400] + " | " + critique[:200]))
-        _log({"tour": tour, "action": action, "resultat": resultat[:2000], "critique": critique})
+        critique = brain.verifier(objectif_actuel, action, resultat)
+        historique.append((f"{nom}", resultat[:350] + " | " + critique[:150]))
+        _log({"tour": tour, "action": action, "resultat": resultat[:1500]})
 
         if callback:
             callback(tour, action, resultat)
 
         tours_sans_commit += 1
         if nom in ("write_file", "trappist_generate") and tours_sans_commit >= commit_chaque:
-            msg = f"agent: avancement auto (tour {tour})"
-            historique.append(("commit_push auto", tools.commit_push(msg)[:200]))
+            tools.commit_push(f"agent: amélioration continue (tour {tour})")
             tours_sans_commit = 0
 
-        time.sleep(1)  # ménage les modèles locaux
+        time.sleep(1)
+
+    return "Arrêté manuellement (fichier STOP détecté)."
 
 
 if __name__ == "__main__":
@@ -76,6 +99,6 @@ if __name__ == "__main__":
 
     def console(t, a, r):
         print(f"\n--- Tour {t} : {a.get('action')} ---")
-        print(str(r)[:600])
+        print(str(r)[:500])
 
     print(boucle(obj, callback=console))

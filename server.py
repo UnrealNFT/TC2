@@ -2,7 +2,12 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from collections import deque
+import os
 import ollama
+
+from agent import loop as agent_loop
+from agent import tools
 
 app = FastAPI()
 
@@ -17,11 +22,18 @@ app.add_middleware(
 MODELE_CERVEAU = "hf.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF:Q4_K_M"
 MODELE_RELECTEUR = "huihui_ai/qwen3-abliterated:8b"
 
+# Stockage des tours
+TOURS = deque(maxlen=100)
+
 class AskRequest(BaseModel):
     question: str
     system: str = ""
     file_content: str = ""
     file_path: str = ""
+
+class AgentRequest(BaseModel):
+    objectif: str
+    max_tours: int = 0
 
 @app.post("/ask")
 async def ask(req: AskRequest):
@@ -57,7 +69,6 @@ RÈGLES STRICTES :
     for i in range(max_loops):
         loops_done = i + 1
 
-        # --- Cerveau ---
         brain = ollama.chat(
             model=MODELE_CERVEAU,
             messages=messages,
@@ -65,7 +76,6 @@ RÈGLES STRICTES :
         )
         reasoning = brain["message"]["content"]
 
-        # --- Relecteur ---
         review_prompt = f"""Question : {req.question}
 
 Réponse du cerveau :
@@ -88,11 +98,9 @@ Réponds en français."""
         )
         final_answer = review["message"]["content"]
 
-        # Si on a un vrai bloc de modification, on arrête
         if "```edit_buffer" in final_answer or "```set_buffer" in final_answer:
             break
 
-        # Sinon on renvoie au cerveau avec le feedback
         messages.append({"role": "assistant", "content": reasoning})
         messages.append({
             "role": "user",
@@ -105,24 +113,39 @@ Réponds en français."""
         "loops": loops_done
     }
 
-from agent import loop as agent_loop
-
-class AgentRequest(BaseModel):
-    objectif: str
+def callback(tour: int, action: dict, resultat: str):
+    pensee = action.get("pensee", "")
+    action_name = action.get("action", "?")
+    if pensee:
+        msg = f"[Tour {tour}] {pensee}"
+    else:
+        msg = f"[Tour {tour}] {action_name} → {str(resultat)[:120]}"
+    TOURS.append(msg)
+    print(msg)
 
 @app.post("/agent/run")
 async def run_agent(req: AgentRequest):
-    def callback(tour, action, resultat):
-        # On pourra streamer plus tard, pour l'instant on log
-        print(f"[Tour {tour}] {action.get('action')} -> {str(resultat)[:100]}")
+    TOURS.clear()
+    max_t = req.max_tours if req.max_tours > 0 else 9999
 
     resume = agent_loop.boucle(
         objectif=req.objectif,
-        max_tours=30,
+        max_tours=max_t,
         commit_chaque=5,
         callback=callback
     )
-    return {"resume": resume, "status": "done"}
+    return {"resume": resume, "status": "done", "tours": list(TOURS)}
+
+@app.get("/agent/status")
+async def agent_status():
+    return {"tours": list(TOURS)}
+
+@app.post("/agent/task")
+async def add_task(req: AgentRequest):
+    tasks_file = os.path.join(tools.ROOT, "tasks.txt")
+    with open(tasks_file, "a", encoding="utf-8") as f:
+        f.write(req.objectif.strip() + "\n")
+    return {"status": "added", "message": "Tâche ajoutée au daemon"}
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,5 +1,5 @@
-"""Outils de l'agent TrappistCode : fichiers, shell, git complet, GitHub, TrappistAI."""
-import os, json, subprocess, urllib.request, urllib.error
+"""Outils de l'agent TrappistCode : fichiers, shell, git complet, GitHub, recherche, TrappistAI."""
+import os, json, subprocess, urllib.request, urllib.error, urllib.parse
 from typing import Optional
 
 ROOT = os.path.abspath(os.environ.get("AGENT_ROOT", os.getcwd()))
@@ -105,6 +105,73 @@ def create_github_repo(name: str, private: bool = False, description: str = "") 
     except Exception as e:
         return f"Erreur: {e}"
 
+def set_root(path: str) -> str:
+    """Change le dossier de travail de l'agent."""
+    global ROOT
+    new_root = os.path.abspath(path)
+    if not os.path.isdir(new_root):
+        return f"Erreur: le dossier n'existe pas : {new_root}"
+    ROOT = new_root
+    os.chdir(ROOT)
+    return f"Dossier de travail changé : {ROOT}"
+
+def clone_repo(url: str, folder: Optional[str] = None) -> str:
+    """Clone un repo GitHub dans un dossier local."""
+    if not folder:
+        folder = url.rstrip("/").split("/")[-1].replace(".git", "")
+    target = os.path.join(os.path.dirname(ROOT), folder)
+    result = shell(f'git clone {url} "{target}"')
+    return f"Clone : {result[:500]}\nDossier : {target}"
+
+def web_search(query: str) -> str:
+    """Recherche simple sur internet via DuckDuckGo."""
+    try:
+        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(query)}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        results = []
+        for line in html.split("\n"):
+            if "result__a" in line and "href" in line:
+                results.append(line.strip()[:250])
+            if len(results) >= 6:
+                break
+        return "\n".join(results) if results else "Aucun résultat clair."
+    except Exception as e:
+        return f"Erreur recherche web: {e}"
+
+def github_search(query: str, search_type: str = "repositories") -> str:
+    """Recherche sur GitHub."""
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("VITE_GITHUB_TOKEN")
+    url = f"https://api.github.com/search/{search_type}?q={urllib.parse.quote(query)}&per_page=5"
+    headers = {"Accept": "application/vnd.github.v3+json", "User-Agent": "TrappistCode"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        items = data.get("items", [])
+        if not items:
+            return "Aucun résultat GitHub."
+        lines = []
+        for item in items[:5]:
+            name = item.get("full_name") or item.get("name", "")
+            url_item = item.get("html_url", "")
+            desc = (item.get("description") or "")[:120]
+            lines.append(f"- {name} | {url_item} | {desc}")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Erreur GitHub search: {e}"
+
+def x_search(query: str) -> str:
+    """Placeholder recherche X."""
+    return f"Recherche X pour '{query}' : à brancher avec l'API X."
+
+def telegram_search(query: str) -> str:
+    """Placeholder recherche Telegram."""
+    return f"Recherche Telegram pour '{query}' : à brancher avec un bot Telegram."
+
 def trappist_generate(kind: str, prompt: str, out_path: str) -> str:
     url = os.environ.get("TRAPPIST_API", "http://localhost:9000/generate")
     body = json.dumps({"kind": kind, "prompt": prompt}).encode()
@@ -131,5 +198,11 @@ TOOLS = {
     "git": git,
     "commit_push": commit_push,
     "create_github_repo": create_github_repo,
+    "set_root": set_root,
+    "clone_repo": clone_repo,
+    "web_search": web_search,
+    "github_search": github_search,
+    "x_search": x_search,
+    "telegram_search": telegram_search,
     "trappist_generate": trappist_generate,
 }
