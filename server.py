@@ -1,16 +1,22 @@
 # pyright: reportMissingImports=false
+import os
+import re
+import asyncio
+import threading
+import requests
+import ollama
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from collections import deque
-import os
-import ollama
 
 from agent import loop as agent_loop
 from agent import tools
 
-app = FastAPI()
+load_dotenv()
 
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,11 +25,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-MODELE_CERVEAU = "hf.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF:Q4_K_M"
-MODELE_RELECTEUR = "huihui_ai/qwen3-abliterated:8b"
+KIMI_ENABLED = True
+MODELE_CERVEAU = "satgeze/gemma4-12b-uncensored-1m"
 
-# Stockage des tours
 TOURS = deque(maxlen=100)
+AGENT_LOCK = threading.Lock()
+AGENT_RUNNING = False
+
+BUILD_WORDS = (
+    "constru", "cré", "cree", "modif", "amélio", "amelio", "code", "fichier",
+    "appli", "app ", "application", "commit", "push", "dossier", "ecris", "écris",
+)
+CONTINU_WORDS = (
+    "toujours", "de plus en plus", "en continu", "sans arrêt", "sans arret", "h24", "24h", "24/24",
+)
+
 
 class AskRequest(BaseModel):
     question: str
@@ -31,121 +47,184 @@ class AskRequest(BaseModel):
     file_content: str = ""
     file_path: str = ""
 
+
 class AgentRequest(BaseModel):
     objectif: str
     max_tours: int = 0
 
-@app.post("/ask")
-async def ask(req: AskRequest):
-    system = req.system or "You are a precise coding assistant in TrappistCode."
 
-    file_context = ""
-    if req.file_path and req.file_content:
-        content = req.file_content
-        if len(content) > 5000:
-            file_context = f"\n\nFichier : {req.file_path} (extrait)\n```\n{content[:3500]}\n```"
-        else:
-            file_context = f"\n\nFichier ouvert : {req.file_path}\n```\n{content}\n```"
+def extraire_dossier(question: str) -> str:
+    m = re.search(r"[A-Za-z]:\\[^\r\n\"']+", question or "")
+    if not m:
+        return ""
+    return m.group(0).strip().split(" ", 1)[0].rstrip("\\.,;:")
 
-    strict = """
-RÈGLES STRICTES :
-- Fais des modifications très ciblées.
-- Utilise un bloc ```edit_buffer avec le texte EXACT à remplacer.
-- Ne réécris pas tout le fichier.
-- Réponds en français.
-- Si tu veux modifier, tu DOIS utiliser le format edit_buffer.
-"""
 
+def _propre(texte: str) -> str:
+    texte = (texte or "").strip()
+    if any(k in texte for k in ("Persona:", "Draft", "Selected response", "Self-correction")):
+        parts = [p.strip() for p in re.split(r"\n\s*\n", texte) if p.strip()]
+        texte = parts[-1] if parts else texte
+        texte = re.sub(r"(?is)^(\*+\s*)?(selected response|réponse)\s*:\s*", "", texte).strip()
+    return texte[:1200]
+
+
+def call_kimi(question: str) -> str:
+    if not KIMI_ENABLED:
+        return ""
+    api_key = os.getenv("WAVESPEED_API_KEY")
+    if not api_key:
+        print("[Kimi] pas de clé, on continue sans")
+        return ""
+    print("[Kimi] appel...")
+    try:
+        response = requests.post(
+            "https://llm.wavespeed.ai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={
+                "model": "moonshotai/kimi-k2.7-code",
+                "messages": [
+                    {"role": "system", "content": "Architecte. Plan court en étapes, sans code complet."},
+                    {"role": "user", "content": question[:4000]},
+                ],
+                "max_tokens": 800,
+            },
+            timeout=40,
+        )
+        response.raise_for_status()
+        plan = response.json()["choices"][0]["message"]["content"]
+        print("[Kimi] plan reçu")
+        return plan
+    except Exception as e:
+        print(f"[Kimi] {e}")
+        return ""
+
+
+def reponse_gemma(question: str, file_path: str, file_content: str) -> str:
+    ctx = ""
+    if file_path:
+        ctx = f"\nFichier ouvert : {file_path}\n```\n{(file_content or '')[:2500]}\n```"
     messages = [
-        {"role": "system", "content": system + file_context + strict},
-        {"role": "user", "content": req.question}
+        {
+            "role": "system",
+            "content": (
+                "Tu es l'assistant de TrappistCode. Français, 2 à 5 phrases. "
+                "Uniquement la réponse finale. Pas de brouillon, pas de Persona, pas de Draft."
+            ),
+        },
+        {"role": "user", "content": question + ctx + "\n/no_think"},
     ]
+    options = {"num_ctx": 4096, "num_predict": 400, "temperature": 0.4}
+    try:
+        r = ollama.chat(model=MODELE_CERVEAU, messages=messages, think=False, options=options)
+    except TypeError:
+        r = ollama.chat(model=MODELE_CERVEAU, messages=messages, options=options)
+    msg = r.get("message") or {}
+    return _propre(msg.get("content") or msg.get("thinking") or "") or "Je suis là."
 
-    max_loops = 4
-    final_answer = ""
-    reasoning = ""
-    loops_done = 0
 
-    for i in range(max_loops):
-        loops_done = i + 1
+def classer(question: str, file_path: str, file_content: str) -> dict:
+    msg = question.strip().lower()
+    path = extraire_dossier(question)
+    continu = any(w in msg for w in CONTINU_WORDS)
 
-        brain = ollama.chat(
-            model=MODELE_CERVEAU,
-            messages=messages,
-            options={"num_ctx": 8192, "temperature": 0.25}
-        )
-        reasoning = brain["message"]["content"]
+    if len(msg) < 24 and not path and any(w in msg for w in ("yo", "salut", "bonjour", "hey", "coucou", "hello", "ça va", "ca va", "merci")):
+        return {"mode": "chat", "kimi": False, "continu": False, "path": "", "reply": "Yo. Dis-moi ce que tu veux construire ou modifier."}
 
-        review_prompt = f"""Question : {req.question}
+    if any(w in msg for w in BUILD_WORDS) or path:
+        kimi = any(w in msg for w in ("kimi", "appli", "application", "projet"))
+        reply = "Je construis ça, puis je continue." if continu else "Je m'en occupe. Les tours s'affichent ici."
+        return {"mode": "code", "kimi": kimi, "continu": continu, "path": path, "reply": reply}
 
-Réponse du cerveau :
-{reasoning}
+    return {"mode": "chat", "kimi": False, "continu": False, "path": "", "reply": reponse_gemma(question, file_path, file_content)}
 
----
-Ton rôle :
-1. Vérifie si la réponse contient un bloc edit_buffer ou set_buffer correct.
-2. Si oui → améliore légèrement et renvoie la version finale.
-3. Si non → explique clairement ce qui manque et demande une correction précise.
-Réponds en français."""
-
-        review = ollama.chat(
-            model=MODELE_RELECTEUR,
-            messages=[
-                {"role": "system", "content": "Tu es un relecteur strict. Tu vérifies les modifications de code et tu forces le bon format."},
-                {"role": "user", "content": review_prompt}
-            ],
-            options={"num_ctx": 8192, "temperature": 0.2}
-        )
-        final_answer = review["message"]["content"]
-
-        if "```edit_buffer" in final_answer or "```set_buffer" in final_answer:
-            break
-
-        messages.append({"role": "assistant", "content": reasoning})
-        messages.append({
-            "role": "user",
-            "content": f"Feedback du relecteur :\n{final_answer}\n\nCorrige et renvoie un vrai bloc edit_buffer avec le texte exact."
-        })
-
-    return {
-        "reasoning": reasoning,
-        "final": final_answer,
-        "loops": loops_done
-    }
 
 def callback(tour: int, action: dict, resultat: str):
-    pensee = action.get("pensee", "")
-    action_name = action.get("action", "?")
-    if pensee:
-        msg = f"[Tour {tour}] {pensee}"
-    else:
-        msg = f"[Tour {tour}] {action_name} → {str(resultat)[:120]}"
-    TOURS.append(msg)
-    print(msg)
+    nom = action.get("action", "?")
+    ligne = f"[Tour {tour}] {nom} -> {str(resultat)[:160]}"
+    print(ligne)
+    TOURS.append({"tour": tour, "action": nom, "pensee": ligne})
+
+
+def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str):
+    global AGENT_RUNNING
+    try:
+        if path:
+            print(tools.set_root(path))
+        plan = call_kimi(objectif) if use_kimi else ""
+        full = objectif
+        if plan:
+            full += "\n\nPLAN KIMI, à suivre. Tu écris les fichiers toi-même, un par un :\n" + plan[:2000]
+        agent_loop.boucle(full, max_tours=0, commit_chaque=5, callback=callback, continu=continu)
+    except Exception as e:
+        ligne = f"[erreur] {e}"
+        TOURS.append({"tour": 0, "action": "erreur", "pensee": ligne})
+        print(ligne)
+    finally:
+        with AGENT_LOCK:
+            AGENT_RUNNING = False
+        TOURS.append({"tour": 0, "action": "done", "pensee": "[agent] objectif terminé"})
+        print("[agent] objectif terminé")
+
+
+def _texte_tours() -> str:
+    lignes = []
+    for t in TOURS:
+        if isinstance(t, dict):
+            lignes.append(t.get("pensee") or t.get("action") or "")
+        else:
+            lignes.append(str(t))
+    return "\n".join(lignes) or "Terminé."
+
+
+@app.post("/ask")
+async def ask(req: AskRequest):
+    global AGENT_RUNNING
+    decision = classer(req.question, req.file_path, req.file_content)
+
+    if decision["mode"] == "chat":
+        return {"response": decision["reply"], "final": decision["reply"], "reasoning": decision["reply"], "mode": "chat"}
+
+    with AGENT_LOCK:
+        if AGENT_RUNNING:
+            with open(os.path.join(tools.ROOT, "tasks.txt"), "a", encoding="utf-8") as f:
+                f.write(req.question.strip() + "\n")
+            reply = "Je suis déjà en train de coder. Je prends ça juste après."
+            return {"response": reply, "final": reply, "reasoning": reply, "mode": "code", "status": "queued"}
+        AGENT_RUNNING = True
+        TOURS.clear()
+
+    if decision["continu"]:
+        threading.Thread(
+            target=lancer_agent,
+            args=(req.question, True, decision["kimi"], decision["path"]),
+            daemon=True,
+        ).start()
+        return {"response": decision["reply"], "final": decision["reply"], "reasoning": decision["reply"], "mode": "code", "status": "running"}
+
+    await asyncio.to_thread(lancer_agent, req.question, False, decision["kimi"], decision["path"])
+    texte = _texte_tours()
+    return {"response": texte, "final": texte, "reasoning": texte, "mode": "code", "status": "done"}
+
 
 @app.post("/agent/run")
 async def run_agent(req: AgentRequest):
     TOURS.clear()
-    max_t = req.max_tours if req.max_tours > 0 else 9999
-
-    resume = agent_loop.boucle(
-        objectif=req.objectif,
-        max_tours=max_t,
-        commit_chaque=5,
-        callback=callback
-    )
+    resume = agent_loop.boucle(req.objectif, max_tours=req.max_tours, commit_chaque=5, callback=callback, continu=False)
     return {"resume": resume, "status": "done", "tours": list(TOURS)}
+
 
 @app.get("/agent/status")
 async def agent_status():
-    return {"tours": list(TOURS)}
+    return {"running": AGENT_RUNNING, "tours": list(TOURS)}
+
 
 @app.post("/agent/task")
 async def add_task(req: AgentRequest):
-    tasks_file = os.path.join(tools.ROOT, "tasks.txt")
-    with open(tasks_file, "a", encoding="utf-8") as f:
+    with open(os.path.join(tools.ROOT, "tasks.txt"), "a", encoding="utf-8") as f:
         f.write(req.objectif.strip() + "\n")
-    return {"status": "added", "message": "Tâche ajoutée au daemon"}
+    return {"status": "added"}
+
 
 if __name__ == "__main__":
     import uvicorn

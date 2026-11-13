@@ -1,11 +1,13 @@
-"""Daemon TrappistCode : tourne en continu, traite les objectifs en file.
+"""Daemon TrappistCode : tourne en continu et vide tasks.txt.
 
 Usage :
-    python -m agent.daemon          # lance le daemon
+    python -m agent.daemon
 
-Pendant qu'il tourne :
-    echo "Cree une appli de map spatiale" >> tasks.txt
-    echo "STOP" > .agent/STOP        # arret propre
+Ajoute un objectif :
+    Add-Content tasks.txt "Crée une appli de map spatiale"
+
+Arrêt propre :
+    New-Item -ItemType File .agent/STOP
 """
 import os, time, traceback
 from . import tools, loop
@@ -13,11 +15,7 @@ from . import tools, loop
 TASKS_FILE = os.path.join(tools.ROOT, "tasks.txt")
 DONE_FILE = os.path.join(tools.ROOT, ".agent", "tasks_done.txt")
 STOP_FILE = os.path.join(tools.ROOT, ".agent", "STOP")
-PAUSE = 30  # secondes entre deux verifications de la file
-
-
-def _marque_stop() -> bool:
-    return os.path.exists(STOP_FILE)
+PAUSE = 5
 
 
 def prochaine_tache() -> str:
@@ -37,12 +35,12 @@ def prochaine_tache() -> str:
 
 
 def run():
-    print("Daemon TrappistCode demarre. Ajoute des objectifs dans tasks.txt")
+    print("Daemon TrappistCode démarré. Objectifs dans tasks.txt")
     os.makedirs(os.path.join(tools.ROOT, ".agent"), exist_ok=True)
     if os.path.exists(STOP_FILE):
         os.remove(STOP_FILE)
 
-    while not _marque_stop():
+    while not os.path.exists(STOP_FILE):
         tache = prochaine_tache()
         if not tache:
             time.sleep(PAUSE)
@@ -52,18 +50,20 @@ def run():
         try:
             resume = loop.boucle(
                 tache,
-                max_tours=60,
+                max_tours=0,
                 commit_chaque=5,
                 callback=lambda t, a, r: print(f"[tour {t}] {a.get('action')}: {str(r)[:200]}"),
             )
-            tools.commit_push(f"agent: objectif termine - {tache[:60]}\n\n{resume[:300]}")
-            print(f"=== Termine : {resume[:200]} ===")
+            print(f"=== Terminé : {str(resume)[:300]} ===")
+            try:
+                tools.commit_push(f"agent: objectif terminé - {tache[:60]}")
+            except Exception as e:
+                print(f"[git] commit ignoré : {e}")
         except Exception:
             traceback.print_exc()
-            tools.commit_push(f"agent: erreur sur objectif - {tache[:60]}")
-        time.sleep(5)
+        time.sleep(2)
 
-    print("Daemon arrete proprement.")
+    print("Daemon arrêté proprement.")
 
 
 if __name__ == "__main__":
