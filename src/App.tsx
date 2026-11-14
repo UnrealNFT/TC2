@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react'
+import type React from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { FileExplorer } from './components/FileExplorer'
 import { GitPanel } from './components/GitPanel'
