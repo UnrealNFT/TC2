@@ -6,6 +6,7 @@ interface SidebarProps {
   workspaces: Workspace[]
   activePath: string
   onAddWorkspace: () => void
+  onNewProject: () => void
   onSelectWorkspace: (path: string) => void
   onRemoveWorkspace: (path: string) => void
   extra: React.ReactNode
@@ -19,7 +20,7 @@ const items: { id: SidebarView; label: string }[] = [
 ]
 
 export function Sidebar(props: SidebarProps) {
-  const { view, onChangeView, workspaces, activePath, onAddWorkspace, onSelectWorkspace, onRemoveWorkspace, extra } = props
+  const { view, onChangeView, workspaces, activePath, onAddWorkspace, onNewProject, onSelectWorkspace, onRemoveWorkspace, extra } = props
 
   return (
     <div style={styles.sidebar}>
@@ -43,6 +44,7 @@ export function Sidebar(props: SidebarProps) {
       {view === 'projects' && (
         <div style={styles.section}>
           <button onClick={onAddWorkspace} style={styles.bigBtn}>+ Ouvrir dossier</button>
+          <button onClick={onNewProject} style={{ ...styles.bigBtn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }}>+ Nouveau projet</button>
           <div style={styles.list}>
             {workspaces.map((ws) => (
               <div
@@ -112,7 +114,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: "'Courier New', Consolas, monospace',
   },
   list: {
     display: 'flex',
