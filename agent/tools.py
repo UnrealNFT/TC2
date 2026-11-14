@@ -9,6 +9,17 @@ def _safe(path: str) -> str:
         raise ValueError(f"Chemin hors projet: {path}")
     return p
 
+def set_root(path: str) -> str:
+    """Change le dossier de travail de l'agent. Crée le dossier s'il n'existe pas."""
+    global ROOT
+    p = os.path.abspath(path)
+    os.makedirs(p, exist_ok=True)
+    if not os.path.isdir(p):
+        raise ValueError(f"Dossier invalide: {path}")
+    ROOT = p
+    os.chdir(ROOT)
+    return f"Dossier de travail: {ROOT}"
+
 def read_file(path: str) -> str:
     with open(_safe(path), encoding="utf-8") as f:
         return f.read()
@@ -29,7 +40,7 @@ def delete_file(path: str) -> str:
 def list_files() -> str:
     out = []
     for dp, dn, fn in os.walk(ROOT):
-        dn[:] = [d for d in dn if d not in (".git", "node_modules", "__pycache__", "dist")]
+        dn[:] = [d for d in dn if d not in (".git", "node_modules", "__pycache__", "dist", ".agent")]
         for f in fn:
             out.append(os.path.relpath(os.path.join(dp, f), ROOT))
     return "\n".join(sorted(out)[:400])
@@ -73,4 +84,5 @@ TOOLS = {
     "git": git,
     "commit_push": commit_push,
     "trappist_generate": trappist_generate,
+    "set_root": set_root,
 }
