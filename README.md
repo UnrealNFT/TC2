@@ -1,54 +1,76 @@
-# TrappistCode
+# TrappistCode IDE
 
-Assistant de code intelligent connecté à GitHub, avec éditeur embarqué et mode autonome (type Copilot).
+IDE local uncensored pour TrappistLand. Interface React + backend Node.js/Express.
 
-## Fonctionnalités
+## Stack
 
-- **Chat de code contextuel** : l'assistant connaît le fichier ouvert dans l'éditeur et son contenu.
-- **Édition locale** : modifications ciblées du buffer via `edit_buffer` / `set_buffer`.
-- **Intégration GitHub** : lecture, création et patch de fichiers directement sur le dépôt.
-- **Mode autonomie** : l'assistant enchaîne les actions (une par tour) jusqu'à compléter la tâche.
-- **Push manuel** : l'utilisateur garde le contrôle — il pousse lui-même ses changements depuis l'éditeur.
+- React 19 + TypeScript + Vite
+- CodeMirror 6
+- Express + simple-git
+- Theme TrappistAI (noir / vert `#00ff41`)
 
-## Stack technique
+## Démarrage rapide
 
-- React + TypeScript
-- Vite (HMR via Oxc / SWC)
-- Oxlint pour le linting
-- API GitHub via token personnel
+```bash
+npm install
+npm run server:dev   # terminal 1
+npm run dev          # terminal 2
+```
 
-## Démarrage
+Ou en une commande :
 
-    npm install
-    npm run dev
+```bash
+npm run start        # concurrently : backend + frontend
+```
 
-## Scripts
+## Backend
 
-    npm run dev       # serveur de développement
-    npm run build     # build de production
-    npm run lint      # lint avec Oxlint
-    npm run preview   # prévisualiser le build
+Port `4269` :
 
-## Actions de l'assistant
+- `/api/files/*` : lister, lire, écrire, créer dossier, renommer, supprimer
+- `/api/git/*` : status, diff, add, commit, push, pull, branches, checkout
+- `/api/preview/*` : aperçu live des fichiers HTML/CSS/JS
 
-### Actions locales (éditeur, prioritaires)
+## Fonctionnalités IDE
 
-| Action         | Description                                          |
-| -------------- | ---------------------------------------------------- |
-| `edit_buffer`  | Remplace un extrait exact dans le fichier ouvert     |
-| `set_buffer`   | Remplace tout le contenu du fichier ouvert           |
+1. **Workspace local** : ouvrir n'importe quel dossier de ton système
+2. **Explorateur de fichiers** : tree, création fichier/dossier
+3. **Éditeur multi-tabs** : CodeMirror, sauvegarde Ctrl+S
+4. **Chat Agent** : modèles Groq / Kimi / Claude / local
+5. **Panel Git** : status, diff, stage, commit, push, pull
+6. **Preview live** : rendu temps réel comme CodePen
+7. **Terminal** : placeholder prêt pour commandes shell
 
-> Les actions locales modifient l'éditeur, pas GitHub. Le push reste manuel.
+## Actions Agent
 
-### Actions GitHub (une seule par réponse)
+### Locales (workspace)
 
-| Action        | Description                                            |
-| ------------- | ------------------------------------------------------ |
-| `list_files`  | Liste les fichiers d'un chemin du dépôt                |
-| `read_file`   | Lit un fichier du dépôt                                |
-| `create_file` | Crée un fichier sur le dépôt (~2500 caractères max)    |
-| `patch_file`  | Patch un fichier directement sur GitHub                |
+- `edit_file` : modifier un fichier local
+- `create_file` : créer un fichier
+- `read_file` : lire un fichier
 
-## Linting
+### Buffer (éditeur)
 
-Configuration Oxlint dans `.oxlintrc.json`. Pour une application en production, active les règles type-aware avec `oxlint-tsgolint` — voir la [documentation Oxlint](https://oxc.rs/docs/guide/usage/linter/rules).
+- `edit_buffer` / `set_buffer` : modifier le fichier ouvert
+
+### GitHub
+
+- `list_files`, `read_file`, `create_file`, `patch_file`
+
+## Architecture
+
+```
+src/
+  components/    UI IDE (Sidebar, FileExplorer, TabbedEditor, AgentPanel, GitPanel, PreviewPanel, TerminalPanel)
+  hooks/         useWorkspace
+  services/      localApi, localAgent, github
+  types/         types partagés
+  App.tsx        layout principal
+
+server/
+  index.js       serveur Express
+  routes/
+    files.js     fs local
+    git.js       simple-git
+    preview.js   serveur statique
+```
