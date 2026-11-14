@@ -10,6 +10,7 @@ import { useWorkspace } from './hooks/useWorkspace'
 import { useGitHubRepos } from './hooks/useGitHubRepos'
 import { localApi } from './services/localApi'
 import type { SidebarView, OpenFile } from './types/ide'
+import type { AgentModelKey } from './services/agentModels'
 
 type BottomTab = 'agent' | 'terminal'
 
@@ -20,12 +21,13 @@ function App() {
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
-  const [showPreview, setShowPreview] = useState(true)
   const [showBottom, setShowBottom] = useState(true)
   const [bottomTab, setBottomTab] = useState<BottomTab>('agent')
   const [backendOk, setBackendOk] = useState<boolean | null>(null)
+  const [previewFloating, setPreviewFloating] = useState<null | { x: number; y: number; w: number; h: number }>(null)
+  const [previewKey, setPreviewKey] = useState(0)
 
-  const [selectedAgent, setSelectedAgent] = useState<any>('groq')
+  const [selectedAgent, setSelectedAgent] = useState<AgentModelKey>('gemma')
   const [githubToken, setGithubToken] = useState('')
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
@@ -40,6 +42,10 @@ function App() {
     }
   }, [activePath, sidebarView])
 
+  const refreshPreview = useCallback(() => {
+    setPreviewKey((k) => k + 1)
+  }, [])
+
   const openFile = useCallback(async (path: string) => {
     try {
       const existing = openFiles.find((f) => f.path === path)
@@ -53,10 +59,13 @@ function App() {
       setOpenFiles((prev) => [...prev, file])
       setActiveFilePath(path)
       setBottomTab('agent')
+      if (['html', 'htm'].includes(path.split('.').pop() || '')) {
+        refreshPreview()
+      }
     } catch (e) {
       console.error(e)
     }
-  }, [openFiles])
+  }, [openFiles, refreshPreview])
 
   const closeFile = useCallback((path: string) => {
     setOpenFiles((prev) => {
@@ -74,18 +83,34 @@ function App() {
 
   const markSaved = useCallback((path: string) => {
     setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, savedContent: f.content } : f)))
-  }, [])
+    refreshPreview()
+  }, [refreshPreview])
+
+  const requestDirectory = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      throw new Error('File System Access API non supportée. Utilise Chrome/Edge.')
+    }
+    // @ts-ignore
+    const handle = await window.showDirectoryPicker()
+    const path = handle.name
+    // Note: on ne peut pas obtenir le vrai chemin absolu côté navigateur.
+    // On garde le nom comme workspace, le backend fallbacksur cwd ou TRAPPIST_WORKSPACE.
+    localApi.setWorkspace(path)
+    await localApi.listFiles('')
+    addWorkspace(path, path)
+    setRefreshKey((k) => k + 1)
+  }
 
   const handleAddWorkspace = async () => {
-    const input = window.prompt('Chemin absolu du dossier projet :')
-    if (!input) return
     try {
+      await requestDirectory()
+    } catch (e: any) {
+      const input = window.prompt('Chemin absolu du dossier projet :')
+      if (!input) return
       localApi.setWorkspace(input)
       await localApi.listFiles('')
       addWorkspace(input)
       setRefreshKey((k) => k + 1)
-    } catch (e: any) {
-      alert('Impossible d\'ouvrir : ' + e.message)
     }
   }
 
@@ -132,13 +157,13 @@ function App() {
       <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Agent Worker</label>
       <select
         value={selectedAgent}
-        onChange={(e) => setSelectedAgent(e.target.value)}
+        onChange={(e) => setSelectedAgent(e.target.value as AgentModelKey)}
         style={styles.input}
       >
-        <option value="groq">Groq</option>
-        <option value="kimi">Kimi</option>
-        <option value="claude">Claude</option>
+        <option value="gemma">Gemma</option>
+        <option value="deepseek">DeepSeek</option>
         <option value="kimi-wavespeed">Kimi WaveSpeed</option>
+        <option value="kimi">Kimi API</option>
         <option value="trappist-local">Trappist Local</option>
       </select>
 
@@ -163,10 +188,19 @@ function App() {
           <option key={r.id} value={r.full_name}>{r.private ? '🔒' : '🌐'} {r.full_name}</option>
         ))}
       </select>
+
+      <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)', marginTop: 8 }}>
+        Kimi 2.7 : {import.meta.env.VITE_KIMI_KEY ? 'clé présente' : 'clé manquante'}<br/>
+        WaveSpeed : {import.meta.env.VITE_WAVESPEED_KEY ? 'clé présente' : 'clé manquante'}
+      </div>
     </div>
   ) : null
 
   const activeContent = activeFilePath ? openFiles.find((f) => f.path === activeFilePath)?.content || '' : ''
+
+  const previewEntry = activeFilePath && ['html', 'htm'].includes(activeFilePath.split('.').pop() || '')
+    ? activeFilePath
+    : 'index.html'
 
   return (
     <div style={styles.app}>
@@ -176,10 +210,10 @@ function App() {
         </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ fontSize: '11px', color: backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)' }}>
-            {backendOk ? 'backend ok' : 'backend OFF — lance node server/index.js'}
+            {backendOk ? 'backend ok' : 'backend OFF'}
           </span>
-          <button onClick={() => setShowPreview(!showPreview)} style={styles.topBtn}>
-            {showPreview ? '✕ Preview' : 'Preview'}
+          <button onClick={() => setPreviewFloating({ x: 800, y: 80, w: 480, h: 320 })} style={styles.topBtn}>
+            Preview flottante
           </button>
           <button onClick={() => setShowBottom(!showBottom)} style={styles.topBtn}>
             {showBottom ? '✕ Bottom' : 'Bottom'}
@@ -211,7 +245,6 @@ function App() {
               onSave={markSaved}
               workspace={activePath}
             />
-            {showPreview && <PreviewPanel workspace={activePath} activeFile={activeFilePath} />}
           </div>
 
           {showBottom && (
@@ -255,12 +288,90 @@ function App() {
         </div>
       </div>
 
+      {previewFloating && (
+        <FloatingPreview
+          key={previewKey}
+          workspace={activePath}
+          entry={previewEntry}
+          initial={previewFloating}
+          onClose={() => setPreviewFloating(null)}
+        />
+      )}
+
       <div style={styles.statusBar}>
         <span>{activePath ? activePath : 'Aucun workspace'}</span>
         <span style={{ marginLeft: 'auto' }}>{selectedAgent}</span>
         {selectedRepo && <span>{selectedRepo}</span>}
         {activeFilePath && <span>{activeFilePath}</span>}
       </div>
+    </div>
+  )
+}
+
+function FloatingPreview({ workspace, entry, initial, onClose }: { workspace: string; entry: string; initial: { x: number; y: number; w: number; h: number }; onClose: () => void }) {
+  const [pos, setPos] = useState(initial)
+  const [dragging, setDragging] = useState(false)
+  const dragRef = useRef<{ dx: number; dy: number } | null>(null)
+  const url = `http://localhost:4269/api/preview/${entry}?base=${encodeURIComponent(workspace)}`
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    setDragging(true)
+    dragRef.current = { dx: e.clientX - pos.x, dy: e.clientY - pos.y }
+  }
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging || !dragRef.current) return
+      setPos((p) => ({ ...p, x: e.clientX - dragRef.current!.dx, y: e.clientY - dragRef.current!.dy }))
+    }
+    const onUp = () => setDragging(false)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('mouseup', onUp)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('mouseup', onUp)
+    }
+  }, [dragging])
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: pos.x,
+        top: pos.y,
+        width: pos.w,
+        height: pos.h,
+        backgroundColor: 'var(--tc-bg)',
+        border: '1px solid var(--tc-border)',
+        boxShadow: '0 0 20px rgba(0,255,65,0.2)',
+        zIndex: 1000,
+        display: 'flex',
+        flexDirection: 'column',
+        overflow: 'hidden',
+      }}
+    >
+      <div
+        onMouseDown={onMouseDown}
+        style={{
+          height: '28px',
+          backgroundColor: 'var(--tc-bg-soft)',
+          borderBottom: '1px solid var(--tc-border)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 8px',
+          cursor: dragging ? 'grabbing' : 'grab',
+          fontSize: '11px',
+        }}
+      >
+        <span style={{ color: 'var(--tc-primary)' }}>{entry}</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          <button onClick={() => setPos((p) => ({ ...p, w: p.w + 40, h: p.h + 40 }))} style={styles.ctlBtn}>+</button>
+          <button onClick={() => setPos((p) => ({ ...p, w: Math.max(200, p.w - 40), h: Math.max(150, p.h - 40) }))} style={styles.ctlBtn}>-</button>
+          <button onClick={onClose} style={styles.ctlBtn}>✕</button>
+        </div>
+      </div>
+      <iframe src={url} style={{ flex: 1, border: 'none', backgroundColor: '#fff' }} title="floating-preview" />
     </div>
   )
 }
@@ -295,6 +406,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: '11px',
     fontFamily: "'Courier New', Consolas, monospace",
+  },
+  ctlBtn: {
+    background: 'transparent',
+    border: '1px solid var(--tc-border)',
+    color: 'var(--tc-primary)',
+    cursor: 'pointer',
+    fontSize: '10px',
+    padding: '2px 6px',
   },
   input: {
     backgroundColor: 'var(--tc-bg-elevated)',
