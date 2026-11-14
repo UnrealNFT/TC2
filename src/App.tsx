@@ -168,24 +168,25 @@ function App() {
     const name = window.prompt('Nom du nouveau projet :')
     if (!name) return
 
-    let base = activePath
-    if (!base) {
+    let parent = activePath
+    if (!parent) {
       const input = window.prompt('Dossier parent (chemin absolu) :', 'C:\\Users\\Djaf\\')
       if (!input) return
-      base = input.trim()
+      parent = input.trim()
     }
+
+    const projectPath = pathJoin(parent, sanitizeName(name))
 
     const template = window.prompt('Template ? (vanilla, react, node)', 'vanilla') || 'vanilla'
 
     try {
-      localApi.setWorkspace(base)
-      await localApi.createProject(name, template)
-      if (!activePath) {
-        addWorkspace(base)
-      }
+      await localApi.createProject(name, template, parent)
+      addWorkspace(projectPath)
+      setOpenFiles([])
+      setActiveFilePath(null)
       setRefreshKey((k) => k + 1)
       setSidebarView('files')
-      showToast(`Projet « ${name} » créé`)
+      showToast(`Projet « ${name} » créé dans ${projectPath}`)
     } catch (e: any) {
       showToast(`Erreur création : ${e.message}`)
       console.error(e)
@@ -248,6 +249,11 @@ function App() {
 
   const pathBasename = (p: string) => {
     return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'export'
+  }
+
+  const pathJoin = (parent: string, name: string) => {
+    const sep = parent.includes('\\') ? '\\' : '/'
+    return `${parent.replace(new RegExp(`${sep}$`), '')}${sep}${name}`
   }
 
   const applyEdit = useCallback((content: string) => {
