@@ -2,11 +2,11 @@ import { useState, useEffect } from 'react'
 import axios from 'axios'
 import { localApi } from '../services/localApi'
 import {
-  createFile,
+  createFile as githubCreateFile,
   parseRepoFullName,
-  listFiles,
-  readFile,
-  patchFile,
+  listFiles as githubListFiles,
+  readFile as githubReadFile,
+  patchFile as githubPatchFile,
 } from '../services/github'
 
 interface AgentPanelProps {
@@ -232,22 +232,22 @@ export function AgentPanel({
     const { owner, repo } = parseRepoFullName(selectedRepo)
 
     if (action.action === 'list_files') {
-      const files = await listFiles({ token: githubToken, owner, repo, path: action.path || '' })
+      const files = await githubListFiles({ token: githubToken, owner, repo, path: action.path || '' })
       return files.map((f) => `${f.type === 'dir' ? '📁' : '📄'} ${f.path}`).join('\n')
     }
 
     if (action.action === 'read_file') {
-      const file = await readFile({ token: githubToken, owner, repo, path: action.path })
+      const file = await githubReadFile({ token: githubToken, owner, repo, path: action.path })
       return `📄 ${file.path}\n\`\`\`\n${truncateContent(file.content)}\n\`\`\``
     }
 
     if (action.action === 'create_file') {
-      await createFile({ token: githubToken, owner, repo, path: action.path, content: action.content, message: action.message })
+      await githubCreateFile({ token: githubToken, owner, repo, path: action.path, content: action.content, message: action.message })
       return `✅ GitHub : ${action.path}`
     }
 
     if (action.action === 'patch_file') {
-      await patchFile({ token: githubToken, owner, repo, path: action.path, oldText: action.oldText, newText: action.newText, message: action.message })
+      await githubPatchFile({ token: githubToken, owner, repo, path: action.path, oldText: action.oldText, newText: action.newText, message: action.message })
       return `✅ Patch GitHub : ${action.path}`
     }
 
