@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import { localApi } from '../services/localApi'
 import { buildWorkspaceSnapshot } from '../services/localSnapshot'
+import { callKimi, needsKimi, type ModelMessage } from '../services/agentModels'
 import {
   createFile as githubCreateFile,
   parseRepoFullName,
@@ -19,12 +20,13 @@ interface AgentPanelProps {
   fileContent: string
   onApplyEdit: (content: string) => void
   workspace: string
+  kimiEnabled: boolean
 }
 
 interface AgentLog {
   tour: number
   agent: string
-  role: string
+  role: 'worker' | 'reviewer' | 'kimi'
   summary: string
   raw: string
 }
@@ -56,6 +58,7 @@ export function AgentPanel({
   fileContent,
   onApplyEdit,
   workspace,
+  kimiEnabled,
 }: AgentPanelProps) {
   const [messages, setMessages] = useState<string[]>([])
   const [input, setInput] = useState('')
@@ -77,7 +80,7 @@ export function AgentPanel({
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [intervalSeconds, running, input, workspace, openPath])
 
-  const addLog = (t: number, agent: string, role: string, summary: string, raw: string) => {
+  const addLog = (t: number, agent: string, role: AgentLog['role'], summary: string, raw: string) => {
     setLogs((prev) => [...prev.slice(-49), { tour: t, agent, role, summary, raw }])
   }
 
@@ -121,7 +124,7 @@ export function AgentPanel({
       ])
       const webText = web?.data?.snippet || 'N/A'
       const ghText = gh?.data?.repos
-        ? gh.data.repos.slice(0, 3).map((r: any) => `${r.name} ★${r.stars} — ${r.description || ''} — ${r.url}`).join('\n')
+        ? gh.data.repos.slice(0, 3).map((r: { name: string; stars: number; description?: string; url: string }) => `${r.name} ★${r.stars} — ${r.description || ''} — ${r.url}`).join('\n')
         : 'N/A'
       return `WEB:\n${webText}\n\nGITHUB:\n${ghText}`
     } catch (e: any) {
@@ -200,31 +203,66 @@ export function AgentPanel({
     return `❌ Action inconnue : ${action.action}`
   }
 
-  const workerTurn = async (currentTour: number, userMission: string, previousFeedback: string): Promise<{ output: string; actionResult: string }> => {
+  const kimiIntervention = async (currentTour: number, mission: string, workerOutput: string, actionResult: string): Promise<{ review: string; corrections: string }> => {
+    const context = await buildContext(isTokenValid && selectedRepo ? 'github' : 'local')
+    const system = `Tu es Kimi, expert senior dans TrappistCode IDE. Tu interviens uniquement quand l'agent local est en difficulté.
+
+CONTEXTE:
+${context}
+
+MISSION: ${mission}
+
+Dernière action du worker local:
+${workerOutput}
+
+Résultat de l'action:
+${actionResult}
+
+INSTRUCTIONS:
+1. Diagnostique le problème.
+2. Donne un RE-PROMPT très précis (instructions concrètes) au worker local pour débloquer la situation.
+3. Si tu peux corriger directement, fournis un bloc \+\`\`\`edit_buffer ou \+\`\`\`edit_file. Tu peux aussi proposer search.
+4. Si c'est bon, réponds OK.`
+
+    const messages: ModelMessage[] = [
+      { role: 'system', content: system },
+      { role: 'user', content: 'Le worker local est bloqué ou a un doute. Aide-le.' },
+    ]
+    const { text: review } = await callKimi(messages, 300_000)
+    addLog(currentTour, 'kimi', 'kimi', needsKimi(review) ? 'aide' : 'ok', review)
+
+    const action = extractAction(review)
+    const corrections = action ? await runAction(action) : 'Aucune action directe'
+    return { review, corrections }
+  }
+
+  const localWorkerTurn = async (currentTour: number, userMission: string, previousFeedback: string): Promise<{ output: string; actionResult: string }> => {
     const context = await buildContext('local')
-    const system = `Tu es un agent worker dans TrappistCode IDE. Mission : ${userMission}
+    const system = `Tu es un agent worker local (Gemma + DeepSeek-V4 + Qwen relecteur) dans TrappistCode IDE. Mission : ${userMission}
 
 CONTEXTE LOCAL:
 ${context}
 
 INSTRUCTIONS:
 - Fais UNE SEULE modification par tour.
-- Explique brièvement ce que tu fais.
-- Pour modifier le fichier ouvert : bloc \+\`\`\`edit_buffer\n{ "action": "edit_buffer", "oldText": "...", "newText": "..." }
+- Explique ce que tu fais.
+- Pour modifier : bloc \+\`\`\`edit_buffer
+{ "action": "edit_buffer", "oldText": "...", "newText": "..." }
 \`\`\`
-- Pour créer un fichier local : bloc \+\`\`\`create_file
+- Pour créer : \+\`\`\`create_file
 { "action": "create_file", "path": "...", "content": "..." }
 \`\`\`
-- Pour rechercher : bloc \+\`\`\`search
+- Pour chercher : \+\`\`\`search
 { "action": "search", "query": "..." }
 \`\`\`
+- Si tu as un doute, explique clairement le problème pour que Kimi puisse t'aider.
 - Réponds en français.
-- Si mission terminée, réponds TERMINÉ.`
+- Mission terminée => TERMINÉ.`
 
     const { final: output } = await askLocalAgent(system, previousFeedback || userMission)
     const action = extractAction(output)
     const actionResult = action ? await runAction(action) : '〔pas d\'action〕'
-    addLog(currentTour, 'trappist-local', 'worker', action?.action || 'chat', output)
+    addLog(currentTour, 'local-gemma', 'worker', action?.action || 'chat', output)
     return { output, actionResult }
   }
 
@@ -245,14 +283,25 @@ INSTRUCTIONS:
       while (currentTour < MAX_AUTO_STEPS && !cancelRef.current) {
         currentTour++
         setTour(currentTour)
-        setMessages((prev) => [...prev, `— Tour ${currentTour} — agent local (Ollama)`])
+        setMessages((prev) => [...prev, `— Tour ${currentTour} — agent local`])
 
-        const { output, actionResult } = await workerTurn(currentTour, mission, feedback)
+        const { output, actionResult } = await localWorkerTurn(currentTour, mission, feedback)
         setMessages((prev) => [...prev, `🛠 ${actionResult}`, output])
 
-        if (output.includes('TERMINÉ') || output.toLowerCase().includes('"action": "done"') || output.includes('{ "action": "done" }')) {
+        if (output.includes('TERMINÉ') || output.toLowerCase().includes('"action": "done"')) {
           setMessages((prev) => [...prev, `🏁 Mission terminée au tour ${currentTour}`])
           break
+        }
+
+        const kimiEvery10 = kimiEnabled && currentTour % 10 === 0
+        const localStuck = needsKimi(output) || actionResult.startsWith('❌')
+
+        if ((kimiEvery10 || localStuck) && !cancelRef.current) {
+          setMessages((prev) => [...prev, `— Kimi intervient (tour ${currentTour}${localStuck ? ' : blocage détecté' : ' : review /10'})`])
+          const { review, corrections } = await kimiIntervention(currentTour, mission, output, actionResult)
+          setMessages((prev) => [...prev, `🧠 Kimi: ${review.slice(0, 500)}${review.length > 500 ? '…' : ''}`, `🛠 Correction: ${corrections.slice(0, 300)}${corrections.length > 300 ? '…' : ''}`])
+          feedback = `Intervention de Kimi au tour ${currentTour}:\n${review}\n\nRésultat action Kimi: ${corrections}\n\nContinue la mission: ${mission}`
+          continue
         }
 
         feedback = `Tour précédent ${currentTour} exécuté. Résultat : ${actionResult}. Continue la mission : ${mission}`
@@ -275,7 +324,7 @@ INSTRUCTIONS:
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>TrappistAI Local</span>
+        <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>TrappistAI Trio</span>
         <span style={{ fontSize: '11px', color: 'var(--tc-text-muted)' }}>Tour {tour}</span>
       </div>
 
@@ -292,12 +341,12 @@ INSTRUCTIONS:
 
       <div style={styles.messages}>
         {messages.length === 0 && (
-          <div style={styles.welcome}>Missionne l'agent local Ollama. Ex: "Crée un portfolio HTML/CSS/JS"</div>
+          <div style={styles.welcome}>Missionne le trio local. Kimi peut intervenir si activé.</div>
         )}
         {messages.map((msg, i) => (
           <div key={i} style={styles.message}>{msg}</div>
         ))}
-        {loading && <div style={{ color: 'var(--tc-primary)', fontSize: 12 }}>Ollama tour {tour} en cours…</div>}
+        {loading && <div style={{ color: 'var(--tc-primary)', fontSize: 12 }}>TrappistAI tour {tour} en cours…</div>}
       </div>
 
       <div style={styles.inputBar}>
@@ -314,17 +363,6 @@ INSTRUCTIONS:
         </button>
         {running && <button onClick={stop} style={styles.stopBtn}>Stop</button>}
       </div>
-
-      {logs.length > 0 && (
-        <div style={styles.logs}>
-          <div style={{ color: 'var(--tc-primary)', fontSize: 10, marginBottom: 4 }}>LOGS AGENTS</div>
-          {logs.slice(-5).map((l, i) => (
-            <div key={i} style={{ fontSize: 10, color: 'var(--tc-text-muted)' }}>
-              T{l.tour} [{l.agent}] {l.summary}
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
@@ -406,12 +444,5 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 14px',
     cursor: 'pointer',
     fontFamily: "'Courier New', Consolas, monospace",
-  },
-  logs: {
-    maxHeight: '90px',
-    overflow: 'auto',
-    padding: '6px 12px',
-    borderTop: '1px solid var(--tc-border)',
-    backgroundColor: 'var(--tc-bg)',
   },
 }
