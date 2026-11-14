@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState, useCallback } from 'react'
+import { useMemo, useEffect, useState, useCallback, useRef } from 'react'
 import CodeMirror from '@uiw/react-codemirror'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { javascript } from '@codemirror/lang-javascript'
@@ -7,10 +7,11 @@ import { css as cssLang } from '@codemirror/lang-css'
 import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { python } from '@codemirror/lang-python'
-import { autocompletion, CompletionContext, startCompletion } from '@codemirror/autocomplete'
-import { closeBrackets, bracketMatching, foldGutter, indentOnInput } from '@codemirror/commands'
+import { autocompletion, closeBrackets, startCompletion } from '@codemirror/autocomplete'
+import type { CompletionContext, CompletionResult, CompletionSource } from '@codemirror/autocomplete'
+import { bracketMatching, foldGutter, indentOnInput, syntaxTree } from '@codemirror/language'
 import { keymap } from '@codemirror/view'
-import { syntaxTree } from '@codemirror/language'
+import type { EditorView } from '@codemirror/view'
 import { localApi } from '../services/localApi'
 import type { OpenFile } from '../types/ide'
 
@@ -39,12 +40,12 @@ function langExtension(path: string) {
 
 function extractWordAt(state: unknown, pos: number): string {
   const st = syntaxTree(state as any)
-  const node = st.resolveInner(pos, -1)
-  let from = pos
-  let to = pos
+  st.resolveInner(pos, -1)
   const line = (state as any).doc.lineAt(pos)
   const text = line.text
   let start = pos - line.from
+  let from = pos
+  let to = pos
   while (start > 0 && /[a-zA-Z0-9_$]/.test(text[start - 1])) {
     start--
     from--
@@ -99,9 +100,24 @@ function createWordCompletions(files: OpenFile[], activePath: string | null) {
   }
 }
 
+function avecLesDeux(local: CompletionSource): CompletionSource {
+  return (context: CompletionContext) => {
+    const sources: CompletionSource[] = [
+      local,
+      ...context.state.languageDataAt<CompletionSource>('autocomplete', context.pos),
+    ]
+    const suite = (i: number): Promise<CompletionResult | null> => {
+      if (i >= sources.length) return Promise.resolve(null)
+      return Promise.resolve(sources[i](context)).then((res) => res ?? suite(i + 1))
+    }
+    return suite(0)
+  }
+}
+
 export function TabbedEditor({ files, activePath, onActivate, onClose, onChange, onSave, workspace }: Props) {
   const active = files.find((f) => f.path === activePath)
   const [status, setStatus] = useState('')
+  const viewRef = useRef<EditorView | null>(null)
 
   const handleGoToDefinition = useCallback(async (editorView: unknown, forceWord?: string) => {
     if (!workspace) {
@@ -145,8 +161,7 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
         foldGutter(),
         indentOnInput(),
         autocompletion({
-          override: [wordCompletion],
-          defaultKeymap: false,
+          override: [avecLesDeux(wordCompletion)],
         }),
         keymap.of([
           { key: 'Ctrl-Space', run: startCompletion, preventDefault: true },
@@ -154,17 +169,6 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
             key: 'F12',
             run: (view: any) => {
               void handleGoToDefinition(view)
-              return true
-            },
-            preventDefault: true,
-          },
-          {
-            key: 'Ctrl-Enter',
-            run: (view: any) => {
-              const state = view.state
-              const pos = state.selection.main.head
-              const word = extractWordAt(state, pos)
-              if (word) void handleGoToDefinition(view, word)
               return true
             },
             preventDefault: true,
@@ -198,18 +202,6 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
       setStatus('Error: ' + e.message)
     }
     setTimeout(() => setStatus(''), 2000)
-  }
-
-  const handleMouseDown = (e: React.MouseEvent, view: any) => {
-    if ((e.ctrlKey || e.metaKey) && e.button === 0) {
-      e.preventDefault()
-      const target = e.target as HTMLElement
-      const rect = target.getBoundingClientRect()
-      const coords = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-      const pos = view.posAtCoords(coords) ?? view.state.selection.main.head
-      const word = extractWordAt(view.state, pos)
-      if (word) void handleGoToDefinition(view, word)
-    }
   }
 
   return (
@@ -259,13 +251,23 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
             theme={oneDark}
             extensions={activeExtensions}
             onChange={(v) => onChange(active.path, v)}
-            onMouseDown={(e, view) => handleMouseDown(e, view)}
+            onCreateEditor={(view) => { viewRef.current = view }}
+            onMouseDown={(e) => {
+              if (!(e.ctrlKey || e.metaKey) || e.button !== 0) return
+              const view = viewRef.current
+              if (!view) return
+              e.preventDefault()
+              const pos = view.posAtCoords({ x: e.clientX, y: e.clientY })
+              if (pos == null) return
+              const word = extractWordAt(view.state, pos)
+              if (word) void handleGoToDefinition(view, word)
+            }}
             basicSetup={{
               lineNumbers: true,
               highlightActiveLineGutter: true,
               highlightActiveLine: true,
-              foldGutter: false, // géré manuellement
-              indentOnInput: false, // géré manuellement
+              foldGutter: false,
+              indentOnInput: false,
               tabSize: 2,
             }}
             style={{
