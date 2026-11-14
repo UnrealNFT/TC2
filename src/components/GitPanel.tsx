@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { localApi } from '../services/localApi'
 import type { GitStatus } from '../services/localApi'
@@ -31,10 +32,10 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
   }, [activePath, refreshKey, load])
 
   const allChanges = [
-    ...(status?.staged || []).map((f: any) => ({ path: f.path, state: 'staged' })),
-    ...(status?.modified || []).map((p) => ({ path: p, state: 'modified' })),
-    ...(status?.not_added || []).map((p) => ({ path: p, state: 'untracked' })),
-    ...(status?.deleted || []).map((p) => ({ path: p, state: 'deleted' })),
+    ...(status?.staged || []).map((f: { path: string }) => ({ path: f.path, state: 'staged' as const })),
+    ...(status?.modified || []).map((p) => ({ path: p, state: 'modified' as const })),
+    ...(status?.not_added || []).map((p) => ({ path: p, state: 'untracked' as const })),
+    ...(status?.deleted || []).map((p) => ({ path: p, state: 'deleted' as const })),
   ]
 
   const act = async (action: () => Promise<void>) => {
