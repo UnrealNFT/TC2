@@ -5,7 +5,7 @@ import path from 'node:path'
 const router = Router()
 
 function resolveBase(req) {
-  const base = req.query.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  const base = req.body?.base || req.query?.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
   return path.resolve(base)
 }
 
