@@ -2,164 +2,90 @@ import axios from 'axios'
 
 const API = 'http://localhost:4269'
 
-export interface FileEntry {
-  name: string
+let base = typeof process !== 'undefined' && process.env?.TRAPPIST_WORKSPACE
+            ? String(process.env.TRAPPIST_WORKSPACE)
+            : ''
+
+export interface FileData {
   path: string
-  type: 'dir' | 'file'
+  content: string
 }
 
 export interface GitStatus {
   branch: string
-  tracking: string | null
-  ahead: number
-  behind: number
+  isClean: boolean
   modified: string[]
+  staged: Array<{ path: string; index: string; working_dir: string }>
   not_added: string[]
   deleted: string[]
-  renamed: { from: string; to: string }[]
-  staged: { path: string; index: string; working_dir: string }[]
-  isClean: boolean
 }
 
-export interface ShellResult {
-  code: number | null
-  stdout: string
-  stderr: string
+export const localApi = {
+  setWorkspace(path: string) {
+    base = path
+  },
+
+  health() {
+    return axios.get(`${API}/health`)
+  },
+
+  listFiles(path: string = '') {
+    return axios.get(`${API}/api/files/list`, { params: { path, base } }).then((r) => r.data as Array<{ name: string; path: string; type: string }>)
+  },
+
+  readFile(path: string): Promise<FileData> {
+    return axios.get(`${API}/api/files/read`, { params: { path, base } }).then((r) => r.data)
+  },
+
+  writeFile(path: string, content: string) {
+    return axios.post(`${API}/api/files/write`, { path, content, base })
+  },
+
+  mkdir(path: string) {
+    return axios.post(`${API}/api/files/mkdir`, { path, base })
+  },
+
+  rename(oldPath: string, newPath: string) {
+    return axios.post(`${API}/api/files/rename`, { oldPath, newPath, base })
+  },
+
+  delete(path: string) {
+    return axios.post(`${API}/api/files/delete`, { path, base })
+  },
+
+  gitStatus(): Promise<GitStatus> {
+    return axios.get(`${API}/api/git/status`, { params: { base } }).then((r) => r.data)
+  },
+
+  gitDiff() {
+    return axios.get(`${API}/api/git/diff`, { params: { base } }).then((r) => String(r.data.diff || ''))
+  },
+
+  gitAdd(path: string) {
+    return axios.post(`${API}/api/git/add`, { path, base })
+  },
+
+  gitUnstage(path: string) {
+    return axios.post(`${API}/api/git/unstage`, { path, base })
+  },
+
+  gitCommit(message: string) {
+    return axios.post(`${API}/api/git/commit`, { message, base })
+  },
+
+  gitPush() {
+    return axios.post(`${API}/api/git/push`, { base })
+  },
+
+  gitPull() {
+    return axios.post(`${API}/api/git/pull`, { base })
+  },
+
+  runShell(command: string) {
+    return axios.post(`${API}/api/shell/run`, { command, base }).then((r) => r.data as { code?: number; stdout?: string; stderr?: string })
+  },
+
+  createProject(name: string, template: string) {
+    return axios.post(`${API}/api/templates/create`, { name, template, base })
+  },
 }
-
-class LocalApi {
-  baseWorkspace = ''
-
-  setWorkspace(ws: string) {
-    this.baseWorkspace = ws
-  }
-
-  get params() {
-    return this.baseWorkspace ? { base: this.baseWorkspace } : {}
-  }
-
-  async health() {
-    const res = await axios.get(`${API}/health`)
-    return res.data
-  }
-
-  async listFiles(path = '') {
-    const res = await axios.get(`${API}/api/files/list`, {
-      params: { ...this.params, path },
-    })
-    return res.data as FileEntry[]
-  }
-
-  async readFile(path: string) {
-    const res = await axios.get(`${API}/api/files/read`, {
-      params: { ...this.params, path },
-    })
-    return res.data as { path: string; content: string }
-  }
-
-  async writeFile(path: string, content: string) {
-    await axios.post(`${API}/api/files/write`, {
-      path,
-      content,
-      ...this.params,
-    })
-  }
-
-  async mkdir(path: string) {
-    await axios.post(`${API}/api/files/mkdir`, {
-      path,
-      ...this.params,
-    })
-  }
-
-  async rename(oldPath: string, newPath: string) {
-    await axios.post(`${API}/api/files/rename`, {
-      oldPath,
-      newPath,
-      ...this.params,
-    })
-  }
-
-  async delete(path: string) {
-    await axios.post(`${API}/api/files/delete`, {
-      path,
-      ...this.params,
-    })
-  }
-
-  async gitStatus() {
-    const res = await axios.get(`${API}/api/git/status`, {
-      params: this.params,
-    })
-    return res.data as GitStatus
-  }
-
-  async gitDiff(path?: string) {
-    const res = await axios.get(`${API}/api/git/diff`, {
-      params: { ...this.params, path },
-    })
-    return res.data.diff as string
-  }
-
-  async gitAdd(path: string) {
-    await axios.post(`${API}/api/git/add`, { path, ...this.params })
-  }
-
-  async gitUnstage(path: string) {
-    await axios.post(`${API}/api/git/unstage`, { path, ...this.params })
-  }
-
-  async gitCommit(message: string, author?: string) {
-    await axios.post(`${API}/api/git/commit`, {
-      message,
-      author,
-      ...this.params,
-    })
-  }
-
-  async gitPush(remote?: string, branch?: string) {
-    await axios.post(`${API}/api/git/push`, {
-      remote,
-      branch,
-      ...this.params,
-    })
-  }
-
-  async gitPull(remote?: string, branch?: string) {
-    await axios.post(`${API}/api/git/pull`, {
-      remote,
-      branch,
-      ...this.params,
-    })
-  }
-
-  async runShell(command: string, args?: string[]): Promise<ShellResult> {
-    const res = await axios.post(`${API}/api/shell/run`, {
-      command,
-      args,
-      ...this.params,
-    })
-    return res.data as ShellResult
-  }
-
-  async createProject(name: string, template: string) {
-    await axios.post(`${API}/api/templates/create`, {
-      name,
-      template,
-      ...this.params,
-    })
-  }
-
-  async listTemplates() {
-    const res = await axios.get(`${API}/api/templates/list`, {
-      params: this.params,
-    })
-    return res.data as string[]
-  }
-
-  previewUrl(filePath: string) {
-    return `${API}/api/preview/${filePath}?${new URLSearchParams(this.params).toString()}`
-  }
-}
-
-export const localApi = new LocalApi()
