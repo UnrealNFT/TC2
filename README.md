@@ -6,30 +6,32 @@ IDE local + IA locale pour TrappistLand.
 
 - React 19 + TypeScript + Vite
 - CodeMirror 6
-- Express + simple-git (backend IDE)
-- Ollama via ton propre serveur Python `server.py`
+- Express + simple-git (backend IDE, port 4269)
+- FastAPI Python `server.py` (agent IA + Kimi/WaveSpeed, port 8000)
 - Theme TrappistAI (noir / vert `#00ff41`)
 
 ## Démarrage rapide
 
-### 1. Lancer ton agent local (depuis le repo TrappistCode)
+### 1️⃣ Agent IA local
 
 ```bash
-cd /chemin/vers/TrappistCode
+# Depuis le repo TrappistCode
 python server.py
 ```
 
-Le serveur agents doit tourner sur `http://localhost:8000/ask`.
+Le serveur agents tourne sur `http://localhost:8000`.
 
-### 2. Lancer le backend IDE (ce repo)
+### 2️⃣ Backend IDE
 
 ```bash
-cd server && npm install && npm run dev
+cd server
+npm install
+npm run dev
 ```
 
 Port `4269`.
 
-### 3. Lancer le frontend
+### 3️⃣ Frontend
 
 ```bash
 npm install
@@ -46,35 +48,49 @@ cd server && npm install && cd ..
 npm run start
 ```
 
-## Backend IDE
+## Configuration
+
+Copie `.env.example` en `.env` et adapte :
+
+```env
+WAVESPEED_API_KEY=wsk_live_9ZQB7Jv9Yh6dfdfdsfsfsdfXHDDvXhK8rtCsTQiwM
+WAVESPEED_MODEL=moonshotai/kimi-k2.7-code
+PORT=4269
+TRAPPIST_WORKSPACE=C:\Users\Djaf\TrappistWorkspaces
+VITE_GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+```
+
+## Backend IDE — routes
 
 Port `4269` :
 
 - `/api/files/*` : CRUD workspace local
-- `/api/git/*` : status, diff, add, commit, push, pull
+- `/api/git/*` : status, diff, add, commit, push, pull, branches
 - `/api/preview/*` : aperçu live HTML/CSS/JS
 - `/api/shell/*` : terminal sandboxé
 - `/api/templates/*` : templates Vanilla / React / Node
 - `/api/search/*` : recherche web + GitHub
+- `/api/zip/*` : export/import ZIP du workspace
 
 ## Agent IA
 
-L'agent de l'IDE appelle ton backend Ollama local sur `http://localhost:8000/ask`.
+L'agent de l'IDE appelle le serveur Python :
 
-Il supporte les actions :
-- `edit_buffer` : modifier le fichier ouvert
-- `edit_file` : modifier un fichier du workspace
-- `create_file` : créer un fichier
-- `read_file` : lire un fichier
-- `search` : recherche web/GitHub
-- `done` / `TERMINÉ` : arrêter la mission
+- Question rapide : `POST /ask`
+- Mission autonome : `POST /agent/run` (envoie `workspace`)
+- Status live : `GET /agent/status`
+
+Depuis l'interface : active "Kimi review" dans les paramètres pour que Kimi intervienne quand DeepSeek est bloqué.
 
 ## Fonctionnalités
 
-1. Workspace local via picker natif ou chemin absolu
-2. Templates de projets Vanilla / React / Node
-3. Explorateur de fichiers + éditeur multi-tabs
-4. Panel Git : status, diff, stage, commit, push, pull
-5. Terminal shell sécurisé
-6. Preview flottante draggable & resizable
-7. Agent IA local + mode autonome
+1. **Workspace local** : picker natif *ou* chemin absolu (Windows supporté)
+2. **Templates** Vanilla / React / Node
+3. **Explorateur de fichiers** avec création de fichiers/dossiers
+4. **Éditeur multi-tabs** avec sauvegarde Ctrl+S
+5. **Panel Git** : status, diff, stage, commit, push, pull
+6. **Terminal shell** sécurisé
+7. **Preview** live pour les fichiers HTML
+8. **Agent IA local** + mode autonome
+9. **Export / import ZIP** du workspace
+10. **Intégration GitHub** (token) + Kimi review
