@@ -14,16 +14,27 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [creating, setCreating] = useState<{ dir: string; type: 'file' | 'dir' | null } | null>(null)
   const [newName, setNewName] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!activePath) return
+    setLoading(true)
+    setError(null)
     try {
       const list = await localApi.listFiles('')
       setTree({ '': list })
-      const initial = new Set([''])
-      setExpanded(initial)
-    } catch (e) {
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        next.add('')
+        return next
+      })
+    } catch (e: any) {
+      const msg = e?.response?.data?.error || e.message || 'Erreur inconnue'
+      setError(`Impossible de lire le workspace : ${msg}`)
       console.error(e)
+    } finally {
+      setLoading(false)
     }
   }, [activePath])
 
@@ -35,8 +46,10 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
     const next = new Set(expanded)
     if (next.has(dir)) {
       next.delete(dir)
+      setExpanded(next)
     } else {
       next.add(dir)
+      setExpanded(next)
       if (!tree[dir]) {
         try {
           const list = await localApi.listFiles(dir)
@@ -46,7 +59,6 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
         }
       }
     }
-    setExpanded(next)
   }
 
   const startCreate = (dir: string, type: 'file' | 'dir') => {
@@ -64,9 +76,11 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
       const list = await localApi.listFiles(parent)
       setTree((t) => ({ ...t, [parent]: list }))
       if (creating.type === 'dir') {
-        const expandedNext = new Set(expanded)
-        expandedNext.add(parent)
-        setExpanded(expandedNext)
+        setExpanded((prev) => {
+          const next = new Set(prev)
+          next.add(parent)
+          return next
+        })
       }
     } catch (e) {
       console.error(e)
@@ -78,17 +92,15 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
   const renderTree = (dirPath: string, depth = 0) => {
     const items = tree[dirPath] || []
     const isExpanded = expanded.has(dirPath)
+    const margin = depth ? 14 : 0
 
     return (
-      <div key={dirPath} style={{ marginLeft: depth ? 14 : 0 }}>
+      <div key={dirPath} style={{ marginLeft: margin }}>
         {dirPath !== '' && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <div
-              onClick={() => toggle(dirPath)}
-              style={styles.row}
-            >
-              <span style={{ color: 'var(--tc-primary)' }}>{isExpanded ? '▼' : '▶'}</span>
-              <span>📁 {dirPath.split('/').pop()}</span>
+            <div onClick={() => toggle(dirPath)} style={styles.row}>
+              <span style={{ color: 'var(--tc-primary)', width: 12, display: 'inline-block' }}>{isExpanded ? '▼' : '▶'}</span>
+              <span style={{ color: 'var(--tc-text)' }}>📁 {dirPath.split(/[/\\]/).pop()}</span>
             </div>
             <button onClick={() => startCreate(dirPath, 'file')} style={styles.mini}>+f</button>
             <button onClick={() => startCreate(dirPath, 'dir')} style={styles.mini}>+d</button>
@@ -137,13 +149,15 @@ export function FileExplorer({ activePath, onOpenFile, refreshKey }: FileExplore
     )
   }
 
+  if (!activePath) {
+    return <div style={styles.empty}>Ouvre un projet dans l'onglet Projets</div>
+  }
+
   return (
     <div style={styles.container}>
-      {!activePath ? (
-        <div style={styles.empty}>Ouvre un projet dans l'onglet Projets</div>
-      ) : (
-        renderTree('')
-      )}
+      {loading && <div style={styles.loading}>Chargement…</div>}
+      {error && <div style={styles.error}>{error}</div>}
+      {!loading && !error && renderTree('')}
     </div>
   )
 }
@@ -160,6 +174,20 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     color: 'var(--tc-text-dim)',
     marginTop: '40px',
+  },
+  loading: {
+    color: 'var(--tc-primary)',
+    fontSize: '12px',
+    padding: '8px 0',
+  },
+  error: {
+    color: 'var(--tc-danger)',
+    backgroundColor: 'rgba(255,0,0,0.08)',
+    border: '1px solid var(--tc-danger)',
+    borderRadius: '4px',
+    padding: '8px',
+    fontSize: '11px',
+    marginBottom: '8px',
   },
   row: {
     display: 'flex',
