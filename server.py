@@ -35,6 +35,7 @@ AGENT_RUNNING = False
 BUILD_WORDS = (
     "constru", "cré", "cree", "modif", "amélio", "amelio", "code", "fichier",
     "appli", "app ", "application", "commit", "push", "dossier", "ecris", "écris",
+    "refactor", "ajoute", "supprime", "corrige", "fix", "build", "create",
 )
 CONTINU_WORDS = (
     "toujours", "de plus en plus", "en continu", "sans arrêt", "sans arret", "h24", "24h", "24/24",
@@ -209,9 +210,20 @@ async def ask(req: AskRequest):
 
 @app.post("/agent/run")
 async def run_agent(req: AgentRequest):
+    global AGENT_RUNNING
+    with AGENT_LOCK:
+        if AGENT_RUNNING:
+            return {"resume": "Un agent est déjà en cours. Patiente ou arrête-le.", "status": "busy", "tours": list(TOURS)}
+        AGENT_RUNNING = True
     TOURS.clear()
-    resume = agent_loop.boucle(req.objectif, max_tours=req.max_tours, commit_chaque=5, callback=callback, continu=False)
-    return {"resume": resume, "status": "done", "tours": list(TOURS)}
+    try:
+        resume = agent_loop.boucle(req.objectif, max_tours=req.max_tours, commit_chaque=5, callback=callback, continu=False)
+        return {"resume": resume, "status": "done", "tours": list(TOURS)}
+    except Exception as e:
+        return {"resume": str(e), "status": "error", "tours": list(TOURS)}
+    finally:
+        with AGENT_LOCK:
+            AGENT_RUNNING = False
 
 
 @app.get("/agent/status")
