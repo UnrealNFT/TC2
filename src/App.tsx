@@ -29,6 +29,7 @@ function App() {
   const [githubToken, setGithubToken] = useState('')
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
+  const [kimiEnabled, setKimiEnabled] = useState(false)
 
   useEffect(() => {
     localApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false))
@@ -149,12 +150,17 @@ function App() {
     <GitPanel activePath={activePath} refreshKey={refreshKey} />
   ) : sidebarView === 'settings' ? (
     <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Agent local Ollama</div>
+      <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Agents</div>
       <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)' }}>
-        Connecté à http://localhost:8000/ask (DeepSeek cerveau + Qwen relecteur)
+        Local: Gemma (Ollama) + DeepSeek/Qwen via localhost:8000/ask
       </div>
 
-      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>GitHub Token</label>
+      <label style={styles.check}>
+        <input type="checkbox" checked={kimiEnabled} onChange={(e) => setKimiEnabled(e.target.checked)} />
+        Activer Kimi (review /10 + secours si bloqué)
+      </label>
+
+      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)', marginTop: 8 }}>GitHub Token</label>
       <input
         type="password"
         value={githubToken}
@@ -260,6 +266,7 @@ function App() {
                   fileContent={activeContent}
                   onApplyEdit={applyEdit}
                   workspace={activePath}
+                  kimiEnabled={kimiEnabled}
                 />
               ) : (
                 <TerminalPanel />
@@ -281,6 +288,7 @@ function App() {
 
       <div style={styles.statusBar}>
         <span>{activePath ? activePath : 'Aucun workspace'}</span>
+        {kimiEnabled && <span>Kimi ON</span>}
         {selectedRepo && <span>{selectedRepo}</span>}
         {activeFilePath && <span>{activeFilePath}</span>}
       </div>
@@ -398,6 +406,14 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: '10px',
     padding: '2px 6px',
+  },
+  check: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '12px',
+    color: 'var(--tc-text)',
+    cursor: 'pointer',
   },
   input: {
     backgroundColor: 'var(--tc-bg-elevated)',
