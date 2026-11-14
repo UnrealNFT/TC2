@@ -51,6 +51,7 @@ class AskRequest(BaseModel):
 
 class AgentRequest(BaseModel):
     objectif: str
+    workspace: str = ""
     max_tours: int = 0
 
 
@@ -217,6 +218,8 @@ async def run_agent(req: AgentRequest):
         AGENT_RUNNING = True
     TOURS.clear()
     try:
+        if req.workspace:
+            print(tools.set_root(req.workspace))
         resume = agent_loop.boucle(req.objectif, max_tours=req.max_tours, commit_chaque=5, callback=callback, continu=False)
         return {"resume": resume, "status": "done", "tours": list(TOURS)}
     except Exception as e:
