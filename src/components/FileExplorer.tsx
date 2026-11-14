@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { localApi } from '../services/localApi'
 import type { FileEntry } from '../types/ide'
