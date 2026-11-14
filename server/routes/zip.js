@@ -27,7 +27,7 @@ router.get('/export', async (req, res) => {
   res.setHeader('Content-Type', 'application/zip')
   res.setHeader('Content-Disposition', `attachment; filename="${path.basename(base)}.zip"`)
   const archive = archiver('zip', { zlib: { level: 9 } })
-  archive.on('error', (err) => res.status(500).json({ error: err.message }))
+  archive.on('error', (err) => res.status(500).json({ error: err.message || String(err) }))
   archive.pipe(res)
   archive.directory(base, false)
   await archive.finalize()
@@ -50,14 +50,14 @@ router.post('/import', async (req, res) => {
       const buffer = Buffer.from(req.body.zipBase64, 'base64')
       stream = Readable.from(buffer)
     }
-    await new Promise<void>((resolve, reject) => {
+    await new Promise((resolve, reject) => {
       stream.pipe(unzipper.Extract({ path: base }))
         .on('close', resolve)
         .on('error', reject)
     })
     res.json({ ok: true, path: base })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 

@@ -53,10 +53,10 @@ router.get('/*', async (req, res) => {
     res.setHeader('Content-Type', getMime(filePath))
     res.send(content)
   } catch (e) {
-    if ((e as any).code === 'ENOENT') {
+    if (e.code === 'ENOENT') {
       return res.status(404).send('Not found')
     }
-    res.status(500).send((e as Error).message)
+    res.status(500).send(e.message || String(e))
   }
 })
 

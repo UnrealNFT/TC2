@@ -50,7 +50,7 @@ router.get('/list', async (req, res) => {
       })
     res.json(items)
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -61,7 +61,7 @@ router.get('/read', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8')
     res.json({ path: req.query.path, content })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -73,7 +73,7 @@ router.post('/write', async (req, res) => {
     await fs.writeFile(filePath, req.body.content, 'utf-8')
     res.json({ ok: true, path: req.body.path })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -84,7 +84,7 @@ router.post('/mkdir', async (req, res) => {
     await fs.mkdir(dirPath, { recursive: true })
     res.json({ ok: true, path: req.body.path })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -96,7 +96,7 @@ router.post('/rename', async (req, res) => {
     await fs.rename(oldPath, newPath)
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -112,7 +112,7 @@ router.post('/delete', async (req, res) => {
     }
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
@@ -128,7 +128,7 @@ router.get('/stat', async (req, res) => {
       mtime: stat.mtime,
     })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 

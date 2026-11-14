@@ -108,7 +108,7 @@ router.post('/create', async (req, res) => {
     }
     res.json({ ok: true, path: projectPath })
   } catch (e) {
-    res.status(500).json({ error: (e as Error).message })
+    res.status(500).json({ error: e.message || String(e) })
   }
 })
 
