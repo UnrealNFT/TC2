@@ -159,12 +159,19 @@ function GitHubPanel({
   }
 
   return (
-    <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box' }}>
+    <div style={{
+      padding: '12px',
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100%',
+      boxSizing: 'border-box',
+      backgroundColor: 'var(--tc-panel)',
+    }}>
       <div
         style={{
           fontSize: '11px',
           textTransform: 'uppercase',
-          color: '#858585',
+          color: 'var(--tc-text-muted)',
           marginBottom: '8px',
         }}
       >
@@ -181,13 +188,14 @@ function GitHubPanel({
             style={{
               width: '100%',
               padding: '6px 8px',
-              backgroundColor: '#3c3c3c',
-              border: '1px solid #3e3e42',
+              backgroundColor: 'var(--tc-bg-elevated)',
+              border: '1px solid var(--tc-border)',
               borderRadius: '4px',
-              color: '#cccccc',
+              color: 'var(--tc-text)',
               fontSize: '12px',
               marginBottom: '8px',
               boxSizing: 'border-box',
+              fontFamily: "'Courier New', Consolas, monospace",
             }}
           />
           <button
@@ -196,25 +204,27 @@ function GitHubPanel({
             style={{
               width: '100%',
               padding: '6px',
-              backgroundColor: '#0e639c',
+              backgroundColor: 'var(--tc-primary)',
               border: 'none',
               borderRadius: '4px',
-              color: 'white',
+              color: 'var(--tc-bg)',
               fontSize: '12px',
               cursor: loading ? 'wait' : 'pointer',
+              fontWeight: 600,
+              fontFamily: "'Courier New', Consolas, monospace",
             }}
           >
             {loading ? 'Connexion...' : 'Connecter'}
           </button>
           {error && (
-            <div style={{ color: '#f14c4c', fontSize: '11px', marginTop: '6px' }}>
+            <div style={{ color: 'var(--tc-danger)', fontSize: '11px', marginTop: '6px' }}>
               {error}
             </div>
           )}
         </>
       ) : (
         <>
-          <div style={{ fontSize: '12px', color: '#4ec9b0', marginBottom: '6px' }}>
+          <div style={{ fontSize: '12px', color: 'var(--tc-primary)', marginBottom: '6px' }}>
             ✓ {githubUser}
           </div>
 
@@ -222,13 +232,14 @@ function GitHubPanel({
             onClick={disconnect}
             style={{
               padding: '4px 8px',
-              backgroundColor: '#3c3c3c',
-              border: '1px solid #3e3e42',
+              backgroundColor: 'var(--tc-bg-elevated)',
+              border: '1px solid var(--tc-border)',
               borderRadius: '4px',
-              color: '#cccccc',
+              color: 'var(--tc-text-muted)',
               fontSize: '11px',
               cursor: 'pointer',
               marginBottom: '12px',
+              fontFamily: "'Courier New', Consolas, monospace",
             }}
           >
             Déconnecter
@@ -238,7 +249,7 @@ function GitHubPanel({
             style={{
               fontSize: '11px',
               textTransform: 'uppercase',
-              color: '#858585',
+              color: 'var(--tc-text-muted)',
               marginBottom: '6px',
             }}
           >
@@ -254,10 +265,11 @@ function GitHubPanel({
                   fontSize: '12px',
                   cursor: 'pointer',
                   backgroundColor:
-                    selectedRepo === repo.full_name ? '#37373d' : 'transparent',
-                  color: selectedRepo === repo.full_name ? 'white' : '#cccccc',
+                    selectedRepo === repo.full_name ? 'var(--tc-selected)' : 'transparent',
+                  color: selectedRepo === repo.full_name ? 'var(--tc-primary)' : 'var(--tc-text)',
                   borderRadius: '4px',
                   marginBottom: '2px',
+                  border: selectedRepo === repo.full_name ? '1px solid var(--tc-border)' : '1px solid transparent',
                 }}
               >
                 {repo.private ? '🔒' : '🌐'} {repo.full_name}
@@ -271,7 +283,7 @@ function GitHubPanel({
                 style={{
                   fontSize: '11px',
                   textTransform: 'uppercase',
-                  color: '#858585',
+                  color: 'var(--tc-text-muted)',
                   marginBottom: '6px',
                   display: 'flex',
                   alignItems: 'center',
@@ -285,9 +297,9 @@ function GitHubPanel({
                     style={{
                       fontSize: '10px',
                       padding: '2px 6px',
-                      background: '#3c3c3c',
-                      border: '1px solid #3e3e42',
-                      color: '#ccc',
+                      background: 'var(--tc-bg-elevated)',
+                      border: '1px solid var(--tc-border)',
+                      color: 'var(--tc-text-muted)',
                       borderRadius: 3,
                       cursor: 'pointer',
                     }}
@@ -296,17 +308,17 @@ function GitHubPanel({
                   </button>
                 )}
               </div>
-              <div style={{ fontSize: '10px', color: '#666', marginBottom: 6 }}>
+              <div style={{ fontSize: '10px', color: 'var(--tc-text-dim)', marginBottom: 6 }}>
                 /{dirPath || ''}
               </div>
               {fileError && (
-                <div style={{ color: '#f14c4c', fontSize: '11px', marginBottom: 6 }}>
+                <div style={{ color: 'var(--tc-danger)', fontSize: '11px', marginBottom: 6 }}>
                   {fileError}
                 </div>
               )}
               <div style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
                 {filesLoading ? (
-                  <div style={{ fontSize: 12, color: '#666' }}>Chargement...</div>
+                  <div style={{ fontSize: 12, color: 'var(--tc-text-dim)' }}>Chargement...</div>
                 ) : (
                   files
                     .slice()
@@ -323,10 +335,11 @@ function GitHubPanel({
                           fontSize: '12px',
                           cursor: 'pointer',
                           backgroundColor:
-                            openPath === item.path ? '#094771' : 'transparent',
-                          color: openPath === item.path ? '#fff' : '#cccccc',
+                            openPath === item.path ? 'var(--tc-selected)' : 'transparent',
+                          color: openPath === item.path ? 'var(--tc-primary)' : 'var(--tc-text)',
                           borderRadius: '4px',
                           marginBottom: '1px',
+                          border: openPath === item.path ? '1px solid var(--tc-border)' : '1px solid transparent',
                         }}
                       >
                         {item.type === 'dir' ? '📁' : '📄'} {item.name}
