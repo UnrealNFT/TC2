@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import archiver from 'archiver'
 import unzipper from 'unzipper'
 
@@ -44,12 +45,12 @@ router.post('/import', async (req, res) => {
       const response = await fetch(req.body.zipUrl)
       if (!response.ok) throw new Error('download failed')
       const buffer = Buffer.from(await response.arrayBuffer())
-      stream = require('stream').Readable.from(buffer)
+      stream = Readable.from(buffer)
     } else {
       const buffer = Buffer.from(req.body.zipBase64, 'base64')
-      stream = require('stream').Readable.from(buffer)
+      stream = Readable.from(buffer)
     }
-    await new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       stream.pipe(unzipper.Extract({ path: base }))
         .on('close', resolve)
         .on('error', reject)
