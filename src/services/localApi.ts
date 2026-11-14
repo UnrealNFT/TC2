@@ -14,7 +14,8 @@ export interface FileData {
 }
 
 export interface GitStatus {
-  branch: string
+  isRepo: boolean
+  branch: string | null
   isClean: boolean
   modified: string[]
   staged: Array<{ path: string; index: string; working_dir: string }>
@@ -90,13 +91,17 @@ export const localApi = {
     return axios.post(`${API}/api/git/pull`, { base })
   },
 
+  gitInit() {
+    return axios.post(`${API}/api/git/init`, { base })
+  },
+
   runShell(command: string) {
     return axios.post(`${API}/api/shell/run`, { command, base })
       .then((r) => r.data as { code?: number; stdout?: string; stderr?: string })
   },
 
-  createProject(name: string, template: string) {
-    return axios.post(`${API}/api/templates/create`, { name, template, base })
+  createProject(name: string, template: string, parent?: string) {
+    return axios.post(`${API}/api/templates/create`, { name, template, base: parent || base })
   },
 
   exportZip(): Promise<Blob> {
