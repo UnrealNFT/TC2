@@ -7,6 +7,7 @@ import { PreviewPanel } from './components/PreviewPanel'
 import { AgentPanel } from './components/AgentPanel'
 import { TerminalPanel } from './components/TerminalPanel'
 import { useWorkspace } from './hooks/useWorkspace'
+import { useGitHubRepos } from './hooks/useGitHubRepos'
 import { localApi } from './services/localApi'
 import type { SidebarView, OpenFile } from './types/ide'
 
@@ -14,6 +15,7 @@ type BottomTab = 'agent' | 'terminal'
 
 function App() {
   const { workspaces, activePath, addWorkspace, removeWorkspace, setActive } = useWorkspace()
+  const { repos, fetchRepos } = useGitHubRepos()
   const [sidebarView, setSidebarView] = useState<SidebarView>('projects')
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
@@ -27,8 +29,6 @@ function App() {
   const [githubToken, setGithubToken] = useState('')
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
-
-  void setSelectedRepo // garde la setter accessible pour éviter unused var
 
   useEffect(() => {
     localApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false))
@@ -89,11 +89,33 @@ function App() {
     }
   }
 
+  const handleNewProject = async () => {
+    const name = window.prompt('Nom du nouveau projet :')
+    if (!name || !activePath) return
+    const template = window.prompt('Template ? (vanilla, react, node)', 'vanilla') || 'vanilla'
+    try {
+      await localApi.createProject(name, template)
+      setRefreshKey((k) => k + 1)
+    } catch (e: any) {
+      alert('Erreur création : ' + e.message)
+    }
+  }
+
   const handleSelectWorkspace = (path: string) => {
     setActive(path)
     setOpenFiles([])
     setActiveFilePath(null)
     setRefreshKey((k) => k + 1)
+  }
+
+  const connectGitHub = async () => {
+    if (!githubToken) return
+    try {
+      await fetchRepos(githubToken)
+      setIsTokenValid(true)
+    } catch {
+      setIsTokenValid(false)
+    }
   }
 
   const applyEdit = useCallback((content: string) => {
@@ -107,18 +129,11 @@ function App() {
     <GitPanel activePath={activePath} refreshKey={refreshKey} />
   ) : sidebarView === 'settings' ? (
     <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Agent</label>
+      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Agent Worker</label>
       <select
         value={selectedAgent}
         onChange={(e) => setSelectedAgent(e.target.value)}
-        style={{
-          backgroundColor: 'var(--tc-bg-elevated)',
-          color: 'var(--tc-text)',
-          border: '1px solid var(--tc-border)',
-          padding: '6px',
-          borderRadius: '4px',
-          fontFamily: "'Courier New', Consolas, monospace",
-        }}
+        style={styles.input}
       >
         <option value="groq">Groq</option>
         <option value="kimi">Kimi</option>
@@ -133,48 +148,29 @@ function App() {
         value={githubToken}
         onChange={(e) => setGithubToken(e.target.value)}
         placeholder="ghp_..."
-        style={{
-          backgroundColor: 'var(--tc-bg-elevated)',
-          color: 'var(--tc-text)',
-          border: '1px solid var(--tc-border)',
-          padding: '6px',
-          borderRadius: '4px',
-          fontFamily: "'Courier New', Consolas, monospace",
-        }}
+        style={styles.input}
       />
-      <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)' }}>
-        Repo GitHub géré côté Agent via actions `list_files` / `read_file`.
-      </div>
+      <button onClick={connectGitHub} style={styles.btn}>Connecter GitHub</button>
+
+      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Repo actif</label>
+      <select
+        value={selectedRepo || ''}
+        onChange={(e) => setSelectedRepo(e.target.value || null)}
+        style={styles.input}
+      >
+        <option value="">— sélectionner —</option>
+        {repos.map((r) => (
+          <option key={r.id} value={r.full_name}>{r.private ? '🔒' : '🌐'} {r.full_name}</option>
+        ))}
+      </select>
     </div>
   ) : null
 
   const activeContent = activeFilePath ? openFiles.find((f) => f.path === activeFilePath)?.content || '' : ''
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        backgroundColor: 'var(--tc-bg)',
-        color: 'var(--tc-text)',
-        fontFamily: "'Courier New', Consolas, monospace",
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          height: '36px',
-          backgroundColor: 'var(--tc-bg-soft)',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 12px',
-          fontSize: '13px',
-          flexShrink: 0,
-          borderBottom: '1px solid var(--tc-border)',
-          justifyContent: 'space-between',
-        }}
-      >
+    <div style={styles.app}>
+      <div style={styles.titleBar}>
         <span style={{ color: 'var(--tc-primary)', textShadow: '0 0 10px rgba(0,255,65,0.5)', fontWeight: 600 }}>
           TrappistCode IDE
         </span>
@@ -198,6 +194,7 @@ function App() {
           workspaces={workspaces}
           activePath={activePath}
           onAddWorkspace={handleAddWorkspace}
+          onNewProject={handleNewProject}
           onSelectWorkspace={handleSelectWorkspace}
           onRemoveWorkspace={removeWorkspace}
           extra={sidebarExtra}
@@ -214,10 +211,7 @@ function App() {
               onSave={markSaved}
               workspace={activePath}
             />
-
-            {showPreview && (
-              <PreviewPanel workspace={activePath} activeFile={activeFilePath} />
-            )}
+            {showPreview && <PreviewPanel workspace={activePath} activeFile={activeFilePath} />}
           </div>
 
           {showBottom && (
@@ -261,22 +255,10 @@ function App() {
         </div>
       </div>
 
-      <div
-        style={{
-          height: '28px',
-          backgroundColor: 'var(--tc-bg-elevated)',
-          color: 'var(--tc-primary)',
-          fontSize: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          padding: '0 16px',
-          gap: '16px',
-          flexShrink: 0,
-          borderTop: '1px solid var(--tc-border)',
-        }}
-      >
+      <div style={styles.statusBar}>
         <span>{activePath ? activePath : 'Aucun workspace'}</span>
         <span style={{ marginLeft: 'auto' }}>{selectedAgent}</span>
+        {selectedRepo && <span>{selectedRepo}</span>}
         {activeFilePath && <span>{activeFilePath}</span>}
       </div>
     </div>
@@ -284,6 +266,26 @@ function App() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
+  app: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100vh',
+    backgroundColor: 'var(--tc-bg)',
+    color: 'var(--tc-text)',
+    fontFamily: "'Courier New', Consolas, monospace",
+    overflow: 'hidden',
+  },
+  titleBar: {
+    height: '36px',
+    backgroundColor: 'var(--tc-bg-soft)',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0 12px',
+    fontSize: '13px',
+    flexShrink: 0,
+    borderBottom: '1px solid var(--tc-border)',
+    justifyContent: 'space-between',
+  },
   topBtn: {
     backgroundColor: 'var(--tc-bg-elevated)',
     color: 'var(--tc-primary)',
@@ -293,6 +295,36 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: '11px',
     fontFamily: "'Courier New', Consolas, monospace",
+  },
+  input: {
+    backgroundColor: 'var(--tc-bg-elevated)',
+    color: 'var(--tc-text)',
+    border: '1px solid var(--tc-border)',
+    borderRadius: '4px',
+    padding: '6px',
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
+  btn: {
+    backgroundColor: 'var(--tc-primary)',
+    color: 'var(--tc-bg)',
+    border: 'none',
+    borderRadius: '4px',
+    padding: '6px',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
+  statusBar: {
+    height: '28px',
+    backgroundColor: 'var(--tc-bg-elevated)',
+    color: 'var(--tc-primary)',
+    fontSize: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0 16px',
+    gap: '16px',
+    flexShrink: 0,
+    borderTop: '1px solid var(--tc-border)',
   },
 }
 
