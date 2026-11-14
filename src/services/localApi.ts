@@ -21,6 +21,12 @@ export interface GitStatus {
   isClean: boolean
 }
 
+export interface ShellResult {
+  code: number | null
+  stdout: string
+  stderr: string
+}
+
 class LocalApi {
   baseWorkspace = ''
 
@@ -125,6 +131,30 @@ class LocalApi {
       branch,
       ...this.params,
     })
+  }
+
+  async runShell(command: string, args?: string[]): Promise<ShellResult> {
+    const res = await axios.post(`${API}/api/shell/run`, {
+      command,
+      args,
+      ...this.params,
+    })
+    return res.data as ShellResult
+  }
+
+  async createProject(name: string, template: string) {
+    await axios.post(`${API}/api/templates/create`, {
+      name,
+      template,
+      ...this.params,
+    })
+  }
+
+  async listTemplates() {
+    const res = await axios.get(`${API}/api/templates/list`, {
+      params: this.params,
+    })
+    return res.data as string[]
   }
 
   previewUrl(filePath: string) {
