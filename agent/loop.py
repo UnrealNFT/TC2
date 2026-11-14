@@ -9,12 +9,15 @@ Kimi (WaveSpeed) intervient à deux moments :
    les fichiers récents, l'historique et guide Gemma.
 2. Secours immédiat si Gemma est bloquée : JSON illisible, done prématuré,
    doute. Max 2 appels de secours consécutifs.
+
+Contexte du projet : on alterne list_files (léger) et get_context (arbre + contenus).
 """
 import json, os, time
 from . import brain, tools
 
 KIMI_TOUR_INTERVAL = 10
 KIMI_MAX_APPELS = 30
+CONTEXT_INTERVAL = 3  # un contexte enrichi toutes les 3 itérations
 
 
 def _dirs():
@@ -105,7 +108,11 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
         if max_tours > 0 and tour > max_tours:
             return f"Max tours atteint ({max_tours})."
 
-        contexte = tools.list_files()
+        # Contexte : léger la plupart du temps, enrichi toutes les CONTEXT_INTERVAL itérations
+        if tour % CONTEXT_INTERVAL == 0:
+            contexte = tools.get_context(max_files=10)
+        else:
+            contexte = tools.list_files()
 
         # Supervisor Kimi tous les KIMI_TOUR_INTERVAL tours, jusqu'à KIMI_MAX_APPELS
         if tour % KIMI_TOUR_INTERVAL == 0 and appels_superviseur < KIMI_MAX_APPELS:
@@ -145,7 +152,7 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
 
         if nom == "done":
             if any(k in objectif.lower() for k in ("lis", "lire", "que fait", "répond", "repond")) \
-                    and not any(h[0] in ("list_files", "read_file") for h in historique):
+                    and not any(h[0] in ("list_files", "read_file", "get_context") for h in historique):
                 historique.append(("done refusé", "pas encore lu"))
                 if callback:
                     callback(tour, action, "Pas encore lu. list_files, puis read_file.")
