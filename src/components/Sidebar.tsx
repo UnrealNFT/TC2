@@ -1,3 +1,4 @@
+import type React from 'react'
 import type { SidebarView, Workspace } from '../types/ide'
 
 interface SidebarProps {
@@ -19,9 +20,7 @@ const items: { id: SidebarView; label: string }[] = [
   { id: 'settings', label: '⚙' },
 ]
 
-export function Sidebar(props: SidebarProps) {
-  const { view, onChangeView, workspaces, activePath, onAddWorkspace, onNewProject, onSelectWorkspace, onRemoveWorkspace, extra } = props
-
+export function Sidebar({ view, onChangeView, workspaces, activePath, onAddWorkspace, onNewProject, onSelectWorkspace, onRemoveWorkspace, extra }: SidebarProps) {
   return (
     <div style={styles.sidebar}>
       <div style={styles.nav}>
@@ -114,7 +113,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace',
+    fontFamily: "'Courier New', Consolas, monospace",
   },
   list: {
     display: 'flex',
