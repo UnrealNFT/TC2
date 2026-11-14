@@ -372,38 +372,116 @@ Format à utiliser :
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-      <div style={{ height: '35px', backgroundColor: '#1e1e1e', borderBottom: '1px solid #3e3e42', display: 'flex', alignItems: 'center', paddingLeft: '16px', flexShrink: 0 }}>
-        <div style={{ padding: '0 16px', borderTop: '2px solid #007acc', backgroundColor: '#1e1e1e' }}>chat.tsx</div>
-        <button onClick={clearChat} style={{ marginLeft: '12px', background: 'transparent', border: '1px solid #3e3e42', color: '#cccccc', fontSize: '11px', padding: '2px 8px', borderRadius: '4px', cursor: 'pointer' }}>
+      <div style={{
+        height: '35px',
+        backgroundColor: 'var(--tc-bg-soft)',
+        borderBottom: '1px solid var(--tc-border)',
+        display: 'flex',
+        alignItems: 'center',
+        paddingLeft: '16px',
+        flexShrink: 0,
+      }}>
+        <div style={{
+          padding: '0 16px',
+          borderTop: '2px solid var(--tc-primary)',
+          backgroundColor: 'var(--tc-bg-soft)',
+          color: 'var(--tc-primary)',
+        }}>chat.tsx</div>
+        <button onClick={clearChat} style={{
+          marginLeft: '12px',
+          background: 'transparent',
+          border: '1px solid var(--tc-border)',
+          color: 'var(--tc-text-muted)',
+          fontSize: '11px',
+          padding: '2px 8px',
+          borderRadius: '4px',
+          cursor: 'pointer',
+        }}>
           Vider le chat
         </button>
-        <label style={{ marginLeft: '12px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: autonomous ? '#4ec9b0' : '#cccccc', cursor: 'pointer', userSelect: 'none' }}>
+        <label style={{
+          marginLeft: '12px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '11px',
+          color: autonomous ? 'var(--tc-primary)' : 'var(--tc-text-muted)',
+          cursor: 'pointer',
+          userSelect: 'none',
+        }}>
           <input type="checkbox" checked={autonomous} onChange={(e) => setAutonomous(e.target.checked)} />
           Autonomie
         </label>
-        <div style={{ marginLeft: 'auto', paddingRight: '16px', fontSize: '11px', color: openPath ? '#4ec9b0' : '#666' }}>
+        <div style={{
+          marginLeft: 'auto',
+          paddingRight: '16px',
+          fontSize: '11px',
+          color: openPath ? 'var(--tc-primary)' : 'var(--tc-text-dim)',
+        }}>
           {openPath ? `📝 ${openPath}` : 'aucun fichier'}
         </div>
       </div>
 
-      <div style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {messages.length === 0 && <div style={{ textAlign: 'center', color: '#666', marginTop: '80px' }}>Ouvre un fichier à droite, puis demande une modif…</div>}
+      <div style={{
+        flex: 1,
+        minHeight: 0,
+        overflow: 'auto',
+        padding: '24px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '24px',
+      }}>
+        {messages.length === 0 && <div style={{ textAlign: 'center', color: 'var(--tc-text-dim)', marginTop: '80px' }}>Ouvre un fichier à droite, puis demande une modif…</div>}
         {messages.map((msg, index) => (
-          <div key={index} style={{ maxWidth: '90%', padding: '16px', borderRadius: '8px', backgroundColor: msg.role === 'user' ? '#094771' : '#252526', color: '#cccccc', whiteSpace: 'pre-wrap', wordBreak: 'break-word', flexShrink: 0 }}>
+          <div key={index} style={{
+            maxWidth: '90%',
+            padding: '16px',
+            borderRadius: '8px',
+            backgroundColor: msg.role === 'user' ? 'var(--tc-selected)' : 'var(--tc-bg-soft)',
+            color: 'var(--tc-text)',
+            border: '1px solid var(--tc-border)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            flexShrink: 0,
+          }}>
             {displayContent(msg.content) || '(message vide)'}
           </div>
         ))}
         {loading && (
-          <div style={{ color: '#9cdcfe', whiteSpace: 'pre-wrap', fontSize: 13, flexShrink: 0 }}>
+          <div style={{ color: 'var(--tc-primary)', whiteSpace: 'pre-wrap', fontSize: 13, flexShrink: 0 }}>
             {tours.length ? tours.join('\n') : `Agent réfléchit${autonomous ? ' (autonomie)...' : '...'}`}
           </div>
         )}
       </div>
 
-      <div style={{ padding: '16px', borderTop: '1px solid #3e3e42', backgroundColor: '#252526', flexShrink: 0 }}>
+      <div style={{
+        padding: '16px',
+        borderTop: '1px solid var(--tc-border)',
+        backgroundColor: 'var(--tc-bg-soft)',
+        flexShrink: 0,
+      }}>
         <div style={{ display: 'flex', gap: '12px' }}>
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Ex: ajoute un commentaire en haut du fichier ouvert" style={{ flex: 1, backgroundColor: '#3c3c3c', border: '1px solid #3e3e42', borderRadius: '4px', padding: '12px', color: '#cccccc', outline: 'none' }} />
-          <button onClick={sendMessage} disabled={loading || !input.trim()} style={{ backgroundColor: '#007acc', color: 'white', padding: '0 32px', borderRadius: '4px', cursor: loading || !input.trim() ? 'default' : 'pointer', border: 'none', opacity: loading || !input.trim() ? 0.6 : 1 }}>
+          <input type="text" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendMessage()} placeholder="Ex: ajoute un commentaire en haut du fichier ouvert" style={{
+            flex: 1,
+            backgroundColor: 'var(--tc-bg-elevated)',
+            border: '1px solid var(--tc-border)',
+            borderRadius: '4px',
+            padding: '12px',
+            color: 'var(--tc-text)',
+            outline: 'none',
+            fontFamily: "'Courier New', Consolas, monospace",
+          }} />
+          <button onClick={sendMessage} disabled={loading || !input.trim()} style={{
+            backgroundColor: 'var(--tc-primary)',
+            color: 'var(--tc-bg)',
+            padding: '0 32px',
+            borderRadius: '4px',
+            cursor: loading || !input.trim() ? 'default' : 'pointer',
+            border: 'none',
+            opacity: loading || !input.trim() ? 0.6 : 1,
+            fontFamily: "'Courier New', Consolas, monospace",
+            fontWeight: 600,
+          }}>
             Envoyer
           </button>
         </div>
