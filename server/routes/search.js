@@ -8,14 +8,21 @@ router.get('/web', async (req, res) => {
   if (!q || typeof q !== 'string') return res.status(400).json({ error: 'q required' })
 
   try {
-    // DuckDuckGo instant answer / html lite scraping
     const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`
     const result = await axios.get(url, {
       headers: { 'User-Agent': 'Mozilla/5.0' },
       timeout: 15000,
     })
-    const snippet = result.data.match(/<a[^>]+result__a[^>]*>(.*?)<\/a>/s)?.[1] || ''
-    res.json({ query: q, snippet: snippet.slice(0, 1000) })
+    const html = result.data
+    const snippets = []
+    const matches = html.matchAll(/<a[^>]+result__a[^>]*>([\s\S]*?)<\/a>.*?<a[^>]+result__snippet[^>]*>([\s\S]*?)<\/a>/g)
+    for (const m of matches) {
+      if (snippets.length >= 3) break
+      const title = m[1].replace(/<[^>]+>/g, '').trim()
+      const text = m[2].replace(/<[^>]+>/g, '').trim()
+      snippets.push(`${title}: ${text}`)
+    }
+    res.json({ query: q, snippet: snippets.join('\n').slice(0, 2000) || 'Aucun résultat' })
   } catch (e) {
     res.status(500).json({ error: e.message })
   }
@@ -30,7 +37,7 @@ router.get('/github', async (req, res) => {
       headers: { Accept: 'application/vnd.github+json' },
       timeout: 15000,
     })
-    const repos = result.data.items.map((r: any) => ({
+    const repos = result.data.items.map((r) => ({
       name: r.full_name,
       url: r.html_url,
       description: r.description,
