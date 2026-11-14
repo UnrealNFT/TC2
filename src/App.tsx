@@ -92,22 +92,9 @@ function App() {
     const handle = await (window as any).showDirectoryPicker()
     const name = handle?.name || fallbackName || 'workspace'
 
-    if ('resolve' in handle && pathLooksRelative(name)) {
-      try {
-        const resolved = await (handle as any).resolve(handle)
-        if (typeof resolved === 'string' && resolved.includes(':\\')) {
-          return resolved
-        }
-      } catch { /* ignore */ }
-    }
-
-    const absPath = window.prompt(`Chemin absolu du dossier « ${name} » :`, 'C:\\Users\\Djaf\\' + sanitizeName(name))
+    const absPath = window.prompt(`Chemin absolu du dossier « ${name} » :`, `C:\\Users\\Djaf\\${sanitizeName(name)}`)
     if (!absPath) throw new Error('Aucun chemin fourni')
     return absPath.trim()
-  }
-
-  function pathLooksRelative(p: string) {
-    return p && !p.includes(':\\') && !p.startsWith('/') && !p.startsWith('\\')
   }
 
   function sanitizeName(n: string) {
@@ -135,18 +122,34 @@ function App() {
 
   const handleNewProject = async () => {
     const name = window.prompt('Nom du nouveau projet :')
-    if (!name || !activePath) return
+    if (!name) return
+
+    let base = activePath
+    if (!base) {
+      const input = window.prompt('Dossier parent (chemin absolu) :', 'C:\\Users\\Djaf\\')
+      if (!input) return
+      base = input.trim()
+    }
+
     const template = window.prompt('Template ? (vanilla, react, node)', 'vanilla') || 'vanilla'
+
     try {
+      localApi.setWorkspace(base)
       await localApi.createProject(name, template)
+      if (!activePath) {
+        addWorkspace(base)
+      }
       setRefreshKey((k) => k + 1)
+      setSidebarView('files')
     } catch (e: any) {
       alert('Erreur création : ' + e.message)
+      console.error(e)
     }
   }
 
   const handleSelectWorkspace = (path: string) => {
     setActive(path)
+    localApi.setWorkspace(path)
     setOpenFiles([])
     setActiveFilePath(null)
     setRefreshKey((k) => k + 1)
