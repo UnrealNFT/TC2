@@ -1,32 +1,90 @@
-import { useState, useCallback } from 'react'
-import Chat from './components/Chat'
-import GitHubPanel from './components/GitHubPanel'
-import Editor from './components/Editor'
+import { useState, useCallback, useEffect } from 'react'
+import { Sidebar } from './components/Sidebar'
+import { FileExplorer } from './components/FileExplorer'
+import { GitPanel } from './components/GitPanel'
+import { TabbedEditor } from './components/TabbedEditor'
+import { PreviewPanel } from './components/PreviewPanel'
+import { useWorkspace } from './hooks/useWorkspace'
+import { localApi } from './services/localApi'
+import type { SidebarView, OpenFile } from './types/ide'
 
 function App() {
-  const [selectedAgent, setSelectedAgent] = useState<
-    'groq' | 'kimi' | 'claude' | 'kimi-wavespeed' | 'trappist-local'
-  >('groq')
-  const [githubToken, setGithubToken] = useState('')
-  const [isTokenValid, setIsTokenValid] = useState(false)
-  const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
+  const { workspaces, activePath, addWorkspace, removeWorkspace, setActive } = useWorkspace()
+  const [sidebarView, setSidebarView] = useState<SidebarView>('projects')
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [showPreview, setShowPreview] = useState(false)
+  const [backendOk, setBackendOk] = useState<boolean | null>(null)
 
-  // --- Buffer fichier ouvert (mode Copilot) ---
-  const [openPath, setOpenPath] = useState<string | null>(null)
-  const [fileContent, setFileContent] = useState('')
-  const [savedContent, setSavedContent] = useState('')
-
-  const openFile = useCallback((path: string, content: string) => {
-    setOpenPath(path)
-    setFileContent(content)
-    setSavedContent(content)
+  useEffect(() => {
+    localApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false))
   }, [])
 
-  const onSaved = useCallback(() => {
-    setSavedContent(fileContent)
-  }, [fileContent])
+  useEffect(() => {
+    if (activePath && sidebarView === 'projects') {
+      setSidebarView('files')
+    }
+  }, [activePath, sidebarView])
 
-  const dirty = openPath !== null && fileContent !== savedContent
+  const openFile = useCallback(async (path: string) => {
+    try {
+      const existing = openFiles.find((f) => f.path === path)
+      if (existing) {
+        setActiveFilePath(path)
+        return
+      }
+      const data = await localApi.readFile(path)
+      const file = { path: data.path, content: data.content, savedContent: data.content }
+      setOpenFiles((prev) => [...prev, file])
+      setActiveFilePath(path)
+    } catch (e) {
+      console.error(e)
+    }
+  }, [openFiles])
+
+  const closeFile = useCallback((path: string) => {
+    setOpenFiles((prev) => {
+      const next = prev.filter((f) => f.path !== path)
+      if (activeFilePath === path) {
+        setActiveFilePath(next.length > 0 ? next[next.length - 1].path : null)
+      }
+      return next
+    })
+  }, [activeFilePath])
+
+  const changeFileContent = useCallback((path: string, content: string) => {
+    setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, content } : f)))
+  }, [])
+
+  const markSaved = useCallback((path: string) => {
+    setOpenFiles((prev) => prev.map((f) => (f.path === path ? { ...f, savedContent: f.content } : f)))
+  }, [])
+
+  const handleAddWorkspace = async () => {
+    const input = window.prompt('Chemin absolu du dossier projet :')
+    if (!input) return
+    try {
+      await localApi.listFiles('')
+      addWorkspace(input)
+      setRefreshKey((k) => k + 1)
+    } catch (e: any) {
+      alert('Impossible d\'ouvrir : ' + e.message)
+    }
+  }
+
+  const handleSelectWorkspace = (path: string) => {
+    setActive(path)
+    setOpenFiles([])
+    setActiveFilePath(null)
+    setRefreshKey((k) => k + 1)
+  }
+
+  const sidebarExtra = sidebarView === 'files' ? (
+    <FileExplorer activePath={activePath} onOpenFile={openFile} refreshKey={refreshKey} />
+  ) : sidebarView === 'git' ? (
+    <GitPanel activePath={activePath} refreshKey={refreshKey} />
+  ) : null
 
   return (
     <div
@@ -51,119 +109,48 @@ function App() {
           fontSize: '13px',
           flexShrink: 0,
           borderBottom: '1px solid var(--tc-border)',
+          justifyContent: 'space-between',
         }}
       >
-        <span style={{ color: 'var(--tc-primary)', textShadow: '0 0 10px rgba(0,255,65,0.5)' }}>
-          TrappistAI
+        <span style={{ color: 'var(--tc-primary)', textShadow: '0 0 10px rgba(0,255,65,0.5)', fontWeight: 600 }}>
+          TrappistCode IDE
         </span>
-        <div
-          style={{
-            marginLeft: 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            fontSize: '11px',
-          }}
-        >
-          Agent :
-          <select
-            value={selectedAgent}
-            onChange={(e) => setSelectedAgent(e.target.value as any)}
-            style={{
-              backgroundColor: 'var(--tc-bg-elevated)',
-              color: 'var(--tc-text)',
-              border: '1px solid var(--tc-border)',
-              padding: '4px 8px',
-              borderRadius: '4px',
-              fontFamily: "'Courier New', Consolas, monospace",
-            }}
-          >
-            <option value="groq">Groq</option>
-            <option value="kimi">Kimi</option>
-            <option value="claude">Claude</option>
-            <option value="kimi-wavespeed">Kimi 2.7 WaveSpeed</option>
-            <option value="trappist-local">Trappist Code (local)</option>
-          </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '11px' }}>
+          <span style={{ color: backendOk === null ? 'var(--tc-text-dim)' : backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)' }}>
+            {backendOk === null ? 'backend ?' : backendOk ? 'backend ok' : 'backend OFF'}
+          </span>
+          <button onClick={() => setShowPreview(!showPreview)} style={styles.topBtn}>
+            {showPreview ? 'Hide preview' : 'Show preview'}
+          </button>
         </div>
       </div>
 
       {/* Main */}
-      <div
-        style={{
-          display: 'flex',
-          flex: 1,
-          minHeight: 0,
-          overflow: 'hidden',
-        }}
-      >
-        {/* GitHub panel */}
-        <div
-          style={{
-            width: '280px',
-            backgroundColor: 'var(--tc-panel)',
-            borderRight: '1px solid var(--tc-border)',
-            flexShrink: 0,
-            minHeight: 0,
-            overflow: 'auto',
-          }}
-        >
-          <GitHubPanel
-            githubToken={githubToken}
-            setGithubToken={setGithubToken}
-            isTokenValid={isTokenValid}
-            setIsTokenValid={setIsTokenValid}
-            selectedRepo={selectedRepo}
-            setSelectedRepo={setSelectedRepo}
-            openPath={openPath}
-            onOpenFile={openFile}
-          />
-        </div>
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        <Sidebar
+          view={sidebarView}
+          onChangeView={setSidebarView}
+          workspaces={workspaces}
+          activePath={activePath}
+          onAddWorkspace={handleAddWorkspace}
+          onSelectWorkspace={handleSelectWorkspace}
+          onRemoveWorkspace={removeWorkspace}
+          extra={sidebarExtra}
+        />
 
-        {/* Chat */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            borderRight: '1px solid var(--tc-border)',
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-          }}
-        >
-          <Chat
-            selectedAgent={selectedAgent}
-            githubToken={githubToken}
-            isTokenValid={isTokenValid}
-            selectedRepo={selectedRepo}
-            openPath={openPath}
-            fileContent={fileContent}
-            onApplyEdit={setFileContent}
-          />
-        </div>
+        <TabbedEditor
+          files={openFiles}
+          activePath={activeFilePath}
+          onActivate={setActiveFilePath}
+          onClose={closeFile}
+          onChange={changeFileContent}
+          onSave={markSaved}
+          workspace={activePath}
+        />
 
-        {/* Editor */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            backgroundColor: 'var(--tc-bg)',
-          }}
-        >
-          <Editor
-            githubToken={githubToken}
-            selectedRepo={selectedRepo}
-            openPath={openPath}
-            content={fileContent}
-            savedContent={savedContent}
-            onChange={setFileContent}
-            onSaved={onSaved}
-          />
-        </div>
+        {showPreview && (
+          <PreviewPanel workspace={activePath} activeFile={activeFilePath} />
+        )}
       </div>
 
       {/* Status bar */}
@@ -181,18 +168,24 @@ function App() {
           borderTop: '1px solid var(--tc-border)',
         }}
       >
-        <span>{selectedAgent}</span>
-        <span>{isTokenValid ? 'GitHub OK' : 'GitHub off'}</span>
-        {selectedRepo && <span>{selectedRepo}</span>}
-        {openPath && (
-          <span style={{ marginLeft: 'auto', color: 'var(--tc-text)' }}>
-            {openPath}
-            {dirty ? ' •' : ''}
-          </span>
-        )}
+        <span>{activePath ? activePath : 'Aucun workspace'}</span>
+        {activeFilePath && <span style={{ marginLeft: 'auto' }}>{activeFilePath}</span>}
       </div>
     </div>
   )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  topBtn: {
+    backgroundColor: 'var(--tc-bg-elevated)',
+    color: 'var(--tc-primary)',
+    border: '1px solid var(--tc-border)',
+    borderRadius: '4px',
+    padding: '4px 10px',
+    cursor: 'pointer',
+    fontSize: '11px',
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
 }
 
 export default App
