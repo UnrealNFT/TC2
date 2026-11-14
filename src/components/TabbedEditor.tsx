@@ -46,7 +46,7 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's' && activePath) {
         e.preventDefault()
-        handleSave(activePath)
+        void handleSave(activePath)
       }
     }
     window.addEventListener('keydown', handler)
@@ -101,7 +101,7 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {active ? `/${active.path}${active.content !== active.savedContent ? ' • unsaved' : ''}` : 'Aucun fichier ouvert'}
         </span>
-        <button onClick={() => activePath && handleSave(activePath)} disabled={!active || activePath === null} style={styles.pushBtn}>
+        <button onClick={() => activePath && void handleSave(activePath)} disabled={!active || activePath === null} style={styles.pushBtn}>
           Save (Ctrl+S)
         </button>
       </div>
