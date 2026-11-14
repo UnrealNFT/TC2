@@ -1,16 +1,20 @@
 """Boucle autonome : une tâche, puis stop. continu=True améliore sans s'arrêter.
 
-Après chaque write_file réussi, DeepSeek lit le fichier.
+Après chaque write_file réussi, DeepSeek/Qwen lit le fichier.
 - ok : le chemin entre dans verrou. On refuse de le réécrire.
-- pas ok : une seule correction, puis on verrouille quand même.
+- pas ok : une seule correction est autorisée, puis on verrouille quand même.
 
-Kimi (WaveSpeed) n'est appelé que si Gemma est bloquée :
-- elle n'a pas renvoyé d'ordre lisible
-- elle dit terminé alors qu'un fichier demandé n'existe pas
-Deux appels maximum par objectif.
+Kimi (WaveSpeed) intervient à deux moments :
+1. Supervisor tous les 10 tours (max 30 appels) : il regarde la structure,
+   les fichiers récents, l'historique et guide Gemma.
+2. Secours immédiat si Gemma est bloquée : JSON illisible, done prématuré,
+   doute. Max 2 appels de secours consécutifs.
 """
 import json, os, time
 from . import brain, tools
+
+KIMI_TOUR_INTERVAL = 10
+KIMI_MAX_APPELS = 30
 
 
 def _dirs():
@@ -44,13 +48,22 @@ def _fichier_manquant(objectif: str, contexte: str, suite: str, verrou: set) -> 
     return ""
 
 
-def _kimi(tour, objectif, historique, contexte, raison, callback, appels_kimi):
-    """Un appel WaveSpeed. Renvoie (action, appels_kimi)."""
+def _kimi_secours(tour, objectif, historique, contexte, raison, callback, appels_kimi):
+    """Un appel WaveSpeed de secours. Renvoie (action, appels_kimi)."""
     appels_kimi += 1
     if callback:
-        callback(tour, {"action": "kimi", "args": {}}, raison)
+        callback(tour, {"action": "kimi_secours", "args": {}}, raison)
     action = brain.secours_kimi(objectif, historique, contexte, raison)
     return action, appels_kimi
+
+
+def _supervisor_kimi(tour, objectif, historique, contexte, callback, appels_superviseur):
+    """Appel supervisor Kimi tous les KIMI_TOUR_INTERVAL tours. Renvoie guidance."""
+    appels_superviseur += 1
+    if callback:
+        callback(tour, {"action": "kimi_supervisor", "args": {}}, f"Tour {tour} : appel supervisor Kimi ({appels_superviseur}/{KIMI_MAX_APPELS})")
+    guidance = brain.kimi_supervise(tour, objectif, historique, contexte)
+    return guidance, appels_superviseur
 
 
 def executer(action: dict) -> str:
@@ -78,8 +91,10 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
     verrou = set()
     refus = 0
     appels_kimi = 0
+    appels_superviseur = 0
     suite = ""
     done_refuses = 0
+    guidance_kimi = ""  # injectée dans le prompt de Gemma au prochain tour
 
     while True:
         _, stop_file = _dirs()
@@ -91,16 +106,25 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
             return f"Max tours atteint ({max_tours})."
 
         contexte = tools.list_files()
+
+        # Supervisor Kimi tous les KIMI_TOUR_INTERVAL tours, jusqu'à KIMI_MAX_APPELS
+        if tour % KIMI_TOUR_INTERVAL == 0 and appels_superviseur < KIMI_MAX_APPELS:
+            guidance_kimi, appels_superviseur = _supervisor_kimi(
+                tour, objectif, historique, contexte, callback, appels_superviseur
+            )
+
         try:
-            action = brain.decider(objectif, historique, contexte)
+            action = brain.decider(objectif, historique, contexte, guidance=guidance_kimi)
+            guidance_kimi = ""  # consommée
         except Exception as e:
             action = {"pensee": "Pas de JSON", "action": "?", "args": {}, "erreur": str(e)[:200]}
 
         nom = action.get("action", "?")
         pensee = action.get("pensee", "")
 
+        # Secours Kimi si Gemma n'a pas compris / est bloquée
         if (pensee == "Pas de JSON" or nom in ("?", "")) and appels_kimi < 2:
-            action, appels_kimi = _kimi(
+            action, appels_kimi = _kimi_secours(
                 tour, objectif, historique, contexte,
                 pensee or action.get("erreur") or "JSON illisible",
                 callback, appels_kimi,
@@ -131,7 +155,7 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
             if manque and done_refuses < 3:
                 done_refuses += 1
                 if appels_kimi < 2:
-                    action, appels_kimi = _kimi(
+                    action, appels_kimi = _kimi_secours(
                         tour, objectif, historique, contexte,
                         f"Pas fini. Il reste à écrire {manque}. Interdit de répondre done.",
                         callback, appels_kimi,
