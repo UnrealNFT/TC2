@@ -1,4 +1,5 @@
-import { defineConfig, type Plugin } from 'vite'
+import type { Plugin } from 'vite'
+import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
 function wavespeedProxyPlugin(): Plugin {
@@ -47,12 +48,12 @@ function wavespeedProxyPlugin(): Plugin {
               upstream.headers.get('content-type') || 'application/json'
             )
             res.end(text)
-          } catch (err: any) {
+          } catch (err) {
             console.error('[wavespeed-proxy]', err)
             res.statusCode = 502
             res.setHeader('Content-Type', 'application/json')
             res.end(
-              JSON.stringify({ error: err?.message || 'proxy failed' })
+              JSON.stringify({ error: (err as Error)?.message || 'proxy failed' })
             )
           }
         }
@@ -64,7 +65,6 @@ function wavespeedProxyPlugin(): Plugin {
 export default defineConfig({
   plugins: [react(), wavespeedProxyPlugin()],
   server: {
-    // ancien proxy gardé en fallback (optionnel)
     proxy: {
       '/wavespeed': {
         target: 'https://llm.wavespeed.ai',
