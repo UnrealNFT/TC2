@@ -8,10 +8,10 @@ const ALLOWED_COMMANDS = ['npm', 'node', 'npx', 'yarn', 'pnpm', 'git', 'python',
 const BLOCKED_ARGS = ['&&', '||', ';', '|', '<', '>', '`', '$', '{', '}']
 
 function resolveBase(req) {
-  return req.query.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  return req.body?.base || req.query?.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
 }
 
-function isSafe(cmd: string, args: string[]) {
+function isSafe(cmd, args) {
   if (!ALLOWED_COMMANDS.includes(cmd)) return false
   for (const arg of args) {
     if (BLOCKED_ARGS.some((b) => arg.includes(b))) return false
@@ -48,7 +48,7 @@ router.post('/run', async (req, res) => {
     child.on('close', (code) => {
       res.json({ code, stdout, stderr })
     })
-  } catch (e: any) {
+  } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
