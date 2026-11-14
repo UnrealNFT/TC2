@@ -47,12 +47,14 @@ export function useChatHistory(workspace: string) {
 
   const updateLast = useCallback((role: ChatMessage['role'], patch: Partial<ChatMessage>) => {
     setMessages((prev) => {
-      const idx = [...prev].reverse().findIndex((m) => m.role === role)
-      if (idx < 0) return prev
-      const realIdx = prev.length - 1 - idx
-      const next = [...prev]
-      next[realIdx] = { ...next[realIdx], ...patch }
-      return next
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === role) {
+          const next = [...prev]
+          next[i] = { ...next[i], ...patch }
+          return next
+        }
+      }
+      return prev
     })
   }, [])
 
