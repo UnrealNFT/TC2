@@ -29,25 +29,34 @@ function getMime(filePath) {
   return MIME[ext] || 'application/octet-stream'
 }
 
+function decodeBase(raw) {
+  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
+  let s = typeof raw === 'string' ? raw : String(raw)
+  try { s = decodeURIComponent(s) } catch { /* ignore */ }
+  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
+  return path.resolve(s)
+}
+
 function resolveBase(req) {
-  return req.query.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  return decodeBase(req.query?.base)
 }
 
 router.get('/*', async (req, res) => {
   try {
     const base = resolveBase(req)
-    const filePath = path.resolve(base, '.' + req.path)
-    if (!filePath.startsWith(path.resolve(base))) {
+    const target = req.path.startsWith('/') ? req.path.slice(1) : req.path
+    const filePath = path.resolve(base, target)
+    if (!filePath.startsWith(base) && !filePath.toLowerCase().startsWith(base.toLowerCase())) {
       return res.status(403).send('Forbidden')
     }
     const content = await fs.readFile(filePath)
     res.setHeader('Content-Type', getMime(filePath))
     res.send(content)
   } catch (e) {
-    if (e.code === 'ENOENT') {
+    if ((e as any).code === 'ENOENT') {
       return res.status(404).send('Not found')
     }
-    res.status(500).send(e.message)
+    res.status(500).send((e as Error).message)
   }
 })
 
