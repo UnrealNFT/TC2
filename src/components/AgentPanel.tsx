@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
+import axios from 'axios'
 import { localApi } from '../services/localApi'
 import { buildWorkspaceSnapshot } from '../services/localSnapshot'
-import { callAgentModel, extractAction } from '../services/agentModels'
-import { searchWeb, searchGitHub } from '../services/agentSearch'
 import {
   createFile as githubCreateFile,
   parseRepoFullName,
@@ -11,10 +10,8 @@ import {
   patchFile as githubPatchFile,
   getRepoTree,
 } from '../services/github'
-import type { AgentModelKey } from '../services/agentModels'
 
 interface AgentPanelProps {
-  selectedAgent: AgentModelKey
   githubToken: string
   isTokenValid: boolean
   selectedRepo: string | null
@@ -27,11 +24,12 @@ interface AgentPanelProps {
 interface AgentLog {
   tour: number
   agent: string
-  role: 'worker' | 'reviewer' | 'fallback'
+  role: string
   summary: string
   raw: string
 }
 
+const ASK_URL = 'http://localhost:8000/ask'
 const MAX_CONTENT_CHARS = 6000
 const MAX_AUTO_STEPS = 10_000
 
@@ -40,8 +38,17 @@ function truncate(content: string) {
   return content.slice(0, MAX_CONTENT_CHARS) + '\n\n…[tronqué]'
 }
 
+function extractAction(text: string) {
+  const match = text.match(/```(?:edit_file|edit_buffer|set_buffer|create_file|read_file|search)\s*([\s\S]*?)```/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch {
+    return null
+  }
+}
+
 export function AgentPanel({
-  selectedAgent,
   githubToken,
   isTokenValid,
   selectedRepo,
@@ -55,8 +62,6 @@ export function AgentPanel({
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [tour, setTour] = useState(0)
-  const [kimiReviewer, setKimiReviewer] = useState(true)
-  const [gemmaFallback, setGemmaFallback] = useState(false)
   const [intervalSeconds, setIntervalSeconds] = useState(0)
   const [logs, setLogs] = useState<AgentLog[]>([])
   const cancelRef = useRef(false)
@@ -70,9 +75,9 @@ export function AgentPanel({
       }, intervalSeconds * 1000)
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [intervalSeconds, running, input, selectedAgent, workspace, openPath])
+  }, [intervalSeconds, running, input, workspace, openPath])
 
-  const addLog = (t: number, agent: string, role: AgentLog['role'], summary: string, raw: string) => {
+  const addLog = (t: number, agent: string, role: string, summary: string, raw: string) => {
     setLogs((prev) => [...prev.slice(-49), { tour: t, agent, role, summary, raw }])
   }
 
@@ -94,13 +99,31 @@ export function AgentPanel({
     return parts.join('\n')
   }
 
+  const askLocalAgent = async (system: string, question: string) => {
+    const res = await axios.post(ASK_URL, {
+      system,
+      question,
+      file_content: fileContent || '',
+      file_path: openPath || '',
+    })
+    return {
+      reasoning: res.data.reasoning || '',
+      final: res.data.final || res.data.response || '',
+      loops: res.data.loops || 1,
+    }
+  }
+
   const doSearch = async (query: string) => {
     try {
       const [web, gh] = await Promise.all([
-        searchWeb(query).catch(() => null),
-        searchGitHub(query).catch(() => null),
+        axios.get(`http://localhost:4269/api/search/web?q=${encodeURIComponent(query)}`, { timeout: 20000 }).catch(() => null),
+        axios.get(`http://localhost:4269/api/search/github?q=${encodeURIComponent(query)}`, { timeout: 20000 }).catch(() => null),
       ])
-      return `WEB:\n${web?.snippet || 'N/A'}\n\nGITHUB:\n${gh ? gh.repos.map((r) => `${r.name} ★${r.stars} — ${r.description || ''} — ${r.url}`).slice(0, 3).join('\n') : 'N/A'}`
+      const webText = web?.data?.snippet || 'N/A'
+      const ghText = gh?.data?.repos
+        ? gh.data.repos.slice(0, 3).map((r: any) => `${r.name} ★${r.stars} — ${r.description || ''} — ${r.url}`).join('\n')
+        : 'N/A'
+      return `WEB:\n${webText}\n\nGITHUB:\n${ghText}`
     } catch (e: any) {
       return `Erreur recherche: ${e.message}`
     }
@@ -187,53 +210,22 @@ ${context}
 INSTRUCTIONS:
 - Fais UNE SEULE modification par tour.
 - Explique brièvement ce que tu fais.
-- Termine toujours par un bloc action JSON valide :
-  { "action": "edit_file" | "create_file" | "edit_buffer" | "search", ... }
-- Pour rechercher sur le web/GitHub : { "action": "search", "query": "..." }
-- Ne réécris PAS un fichier entier sauf nécessaire.
-- Si mission terminée => action { "action": "done" }
-- Réponds en français.`
+- Pour modifier le fichier ouvert : bloc \+\`\`\`edit_buffer\n{ "action": "edit_buffer", "oldText": "...", "newText": "..." }
+\`\`\`
+- Pour créer un fichier local : bloc \+\`\`\`create_file
+{ "action": "create_file", "path": "...", "content": "..." }
+\`\`\`
+- Pour rechercher : bloc \+\`\`\`search
+{ "action": "search", "query": "..." }
+\`\`\`
+- Réponds en français.
+- Si mission terminée, réponds TERMINÉ.`
 
-    const { text: output } = await callAgentModel(selectedAgent, [
-      { role: 'system', content: system },
-      { role: 'user', content: previousFeedback || 'Exécute la mission.' },
-    ], { fileContent, filePath: openPath || '' })
-
+    const { final: output } = await askLocalAgent(system, previousFeedback || userMission)
     const action = extractAction(output)
     const actionResult = action ? await runAction(action) : '〔pas d\'action〕'
-    addLog(currentTour, selectedAgent, 'worker', action?.action || 'chat', output)
+    addLog(currentTour, 'trappist-local', 'worker', action?.action || 'chat', output)
     return { output, actionResult }
-  }
-
-  const reviewTurn = async (currentTour: number, mission: string, lastWorkerOutput: string, lastActionResult: string, model: AgentModelKey): Promise<string> => {
-    const context = await buildContext(isTokenValid && selectedRepo ? 'github' : 'local')
-    const system = `Tu es Kimi, reviewer senior dans TrappistCode IDE. Tu interviens pour vérifier le travail d'un agent worker.
-
-CONTEXTE:
-${context}
-
-MISSION: ${mission}
-
-Dernière action worker:
-${lastWorkerOutput}
-
-Résultat:
-${lastActionResult}
-
-INSTRUCTIONS:
-1. Vérifie qualité, sécurité, bugs, cohérence.
-2. Si OK exactement : REVIEW_OK
-3. Sinon REVIEW_NEEDED puis liste corrections concrètes pour le worker.
-4. Tu peux commander des recherches web/GitHub si besoin via une action { "action": "search", "query": "..." }.
-5. Sois chirurgical.`
-
-    const { text: out } = await callAgentModel(model, [
-      { role: 'system', content: system },
-      { role: 'user', content: 'Vérifie le travail du dernier tour.' },
-    ], { timeout: 300_000, fileContent, filePath: openPath || '' })
-
-    addLog(currentTour, model, 'reviewer', out.startsWith('REVIEW_OK') ? 'OK' : 'NEEDED', out)
-    return out
   }
 
   const runMission = async () => {
@@ -253,41 +245,17 @@ INSTRUCTIONS:
       while (currentTour < MAX_AUTO_STEPS && !cancelRef.current) {
         currentTour++
         setTour(currentTour)
-        setMessages((prev) => [...prev, `— Tour ${currentTour} — Worker: ${selectedAgent}`])
+        setMessages((prev) => [...prev, `— Tour ${currentTour} — agent local (Ollama)`])
 
         const { output, actionResult } = await workerTurn(currentTour, mission, feedback)
         setMessages((prev) => [...prev, `🛠 ${actionResult}`, output])
 
-        if (output.toLowerCase().includes('"action": "done"') || output.includes('{ "action": "done" }')) {
+        if (output.includes('TERMINÉ') || output.toLowerCase().includes('"action": "done"') || output.includes('{ "action": "done" }')) {
           setMessages((prev) => [...prev, `🏁 Mission terminée au tour ${currentTour}`])
           break
         }
 
-        const shouldReview = kimiReviewer && currentTour % 10 === 0
-        if (shouldReview) {
-          setMessages((prev) => [...prev, `— Review Kimi tour ${currentTour}`])
-          const review = await reviewTurn(currentTour, mission, output, actionResult, 'kimi')
-          setMessages((prev) => [...prev, `👁 Kimi: ${review.slice(0, 500)}${review.length > 500 ? '…' : ''}`])
-          if (review.includes('REVIEW_NEEDED') && !cancelRef.current) {
-            feedback = `Corrections demandées par Kimi au tour ${currentTour}:\n${review}`
-            continue
-          }
-        }
-
-        if (gemmaFallback && !shouldReview && currentTour % 5 === 0) {
-          const fallbackReview = await reviewTurn(currentTour, mission, output, actionResult, 'gemma')
-          if (fallbackReview.includes('REVIEW_NEEDED')) {
-            setMessages((prev) => [...prev, `👁 Gemma signale : ${fallbackReview.slice(0, 300)}…`])
-            if (kimiReviewer) {
-              feedback = `Gemma a signalé un problème au tour ${currentTour}. Kimi vérifiera au prochain multiple de 10. En attendant, corrige si possible.`
-            } else {
-              feedback = `Corrections suggérées par Gemma au tour ${currentTour}:\n${fallbackReview}`
-              continue
-            }
-          }
-        }
-
-        feedback = `Tour précédent ${currentTour} exécuté. Continue la mission : ${mission}`
+        feedback = `Tour précédent ${currentTour} exécuté. Résultat : ${actionResult}. Continue la mission : ${mission}`
       }
     } catch (e: any) {
       setMessages((prev) => [...prev, `❌ Erreur: ${e.message}`])
@@ -307,17 +275,7 @@ INSTRUCTIONS:
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>TrappistAI Multi-Agent</span>
-          <label style={styles.check}>
-            <input type="checkbox" checked={kimiReviewer} onChange={(e) => setKimiReviewer(e.target.checked)} />
-            Kimi /10
-          </label>
-          <label style={styles.check}>
-            <input type="checkbox" checked={gemmaFallback} onChange={(e) => setGemmaFallback(e.target.checked)} />
-            Gemma /5
-          </label>
-        </div>
+        <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>TrappistAI Local</span>
         <span style={{ fontSize: '11px', color: 'var(--tc-text-muted)' }}>Tour {tour}</span>
       </div>
 
@@ -334,12 +292,12 @@ INSTRUCTIONS:
 
       <div style={styles.messages}>
         {messages.length === 0 && (
-          <div style={styles.welcome}>Missionne le trio. Ex: "Crée un portfolio HTML/CSS/JS"</div>
+          <div style={styles.welcome}>Missionne l'agent local Ollama. Ex: "Crée un portfolio HTML/CSS/JS"</div>
         )}
         {messages.map((msg, i) => (
           <div key={i} style={styles.message}>{msg}</div>
         ))}
-        {loading && <div style={{ color: 'var(--tc-primary)', fontSize: 12 }}>TrappistAI tour {tour} en cours…</div>}
+        {loading && <div style={{ color: 'var(--tc-primary)', fontSize: 12 }}>Ollama tour {tour} en cours…</div>}
       </div>
 
       <div style={styles.inputBar}>
@@ -362,7 +320,7 @@ INSTRUCTIONS:
           <div style={{ color: 'var(--tc-primary)', fontSize: 10, marginBottom: 4 }}>LOGS AGENTS</div>
           {logs.slice(-5).map((l, i) => (
             <div key={i} style={{ fontSize: 10, color: 'var(--tc-text-muted)' }}>
-              T{l.tour} [{l.agent} / {l.role}] {l.summary}
+              T{l.tour} [{l.agent}] {l.summary}
             </div>
           ))}
         </div>
@@ -389,14 +347,6 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 12px',
     fontSize: '12px',
     flexShrink: 0,
-  },
-  check: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    color: 'var(--tc-text-muted)',
-    fontSize: '11px',
-    cursor: 'pointer',
   },
   messages: {
     flex: 1,
