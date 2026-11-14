@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
-import axios from 'axios'
 import { localApi } from '../services/localApi'
 import { buildWorkspaceSnapshot } from '../services/localSnapshot'
+import { callAgentModel, extractAction } from '../services/agentModels'
 import {
   createFile as githubCreateFile,
   parseRepoFullName,
@@ -10,9 +10,10 @@ import {
   patchFile as githubPatchFile,
   getRepoTree,
 } from '../services/github'
+import type { AgentModelKey } from '../services/agentModels'
 
 interface AgentPanelProps {
-  selectedAgent: 'groq' | 'kimi' | 'claude' | 'kimi-wavespeed' | 'trappist-local'
+  selectedAgent: AgentModelKey
   githubToken: string
   isTokenValid: boolean
   selectedRepo: string | null
@@ -30,17 +31,12 @@ interface AgentLog {
   raw: string
 }
 
-const MAX_HISTORY = 16
 const MAX_CONTENT_CHARS = 6000
-const MAX_AUTO_STEPS = 1000 // boucle infinie théorique
+const MAX_AUTO_STEPS = 10_000
 
 function truncate(content: string) {
   if (content.length <= MAX_CONTENT_CHARS) return content
   return content.slice(0, MAX_CONTENT_CHARS) + '\n\n…[tronqué]'
-}
-
-function extractText(message: any) {
-  return message?.content?.trim?.() || message?.reasoning_content?.trim?.() || ''
 }
 
 export function AgentPanel({
@@ -59,85 +55,32 @@ export function AgentPanel({
   const [running, setRunning] = useState(false)
   const [tour, setTour] = useState(0)
   const [kimiReviewer, setKimiReviewer] = useState(true)
-  const [gemmaFallback, setGemmaFallback] = useState(true)
-  const [intervalMinutes, setIntervalMinutes] = useState(0)
+  const [gemmaFallback, setGemmaFallback] = useState(false)
+  const [intervalSeconds, setIntervalSeconds] = useState(0)
   const [logs, setLogs] = useState<AgentLog[]>([])
-  const timerRef = useRef<NodeJS.Timeout | null>(null)
+  const cancelRef = useRef(false)
+  const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    if (timerRef.current) clearInterval(timerRef.current)
-    if (intervalMinutes > 0) {
-      timerRef.current = setInterval(() => {
-        if (!running && input.trim()) runMission()
-      }, intervalMinutes * 60 * 1000)
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    if (intervalSeconds > 0) {
+      intervalRef.current = setInterval(() => {
+        if (!running && input.trim() && !cancelRef.current) runMission()
+      }, intervalSeconds * 1000)
     }
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [intervalMinutes, running, input, selectedAgent, workspace, openPath])
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+  }, [intervalSeconds, running, input, selectedAgent, workspace, openPath])
 
   const addLog = (t: number, agent: string, role: AgentLog['role'], summary: string, raw: string) => {
     setLogs((prev) => [...prev.slice(-49), { tour: t, agent, role, summary, raw }])
   }
 
-  const callModel = async (modelKey: string, system: string, user: string, longTimeout = false): Promise<string> => {
-    const apiMessages = [
-      { role: 'system', content: system },
-      { role: 'user', content: truncate(user) },
-    ]
-
-    if (modelKey === 'trappist-local') {
-      try {
-        const res = await axios.post('http://localhost:8000/ask', {
-          question: user,
-          system,
-          file_content: fileContent || '',
-          file_path: openPath || '',
-        })
-        return res.data.final || res.data.reasoning || res.data.response || '(vide)'
-      } catch (e: any) {
-        return `❌ Local agent: ${e.message}`
-      }
-    }
-
-    if (modelKey === 'groq') {
-      const res = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        { model: 'llama-3.1-8b-instant', messages: apiMessages, max_tokens: 4096 },
-        {
-          headers: { Authorization: `Bearer ${import.meta.env.VITE_GROQ_KEY}`, 'Content-Type': 'application/json' },
-          timeout: 60000,
-        }
-      )
-      return extractText(res.data.choices?.[0]?.message)
-    }
-
-    const modelMap: Record<string, string> = {
-      kimi: 'moonshotai/kimi-k3',
-      'kimi-wavespeed': 'moonshotai/kimi-k3',
-      claude: 'anthropic/claude-sonnet-4.5',
-      gemma: 'google/gemma-3-27b-it',
-      deepseek: 'deepseek/deepseek-v4-flash',
-    }
-
-    const model = modelMap[modelKey] ?? 'deepseek/deepseek-v4-flash'
-    const res = await axios.post(
-      '/api/wavespeed/chat/completions',
-      { model, messages: apiMessages, max_tokens: 4096 },
-      {
-        headers: { Authorization: `Bearer ${import.meta.env.VITE_WAVESPEED_KEY}`, 'Content-Type': 'application/json' },
-        timeout: longTimeout ? 300_000 : 180_000,
-      }
-    )
-    return extractText(res.data.choices?.[0]?.message)
-  }
-
   const buildContext = async (mode: 'local' | 'github') => {
     const parts: string[] = []
-
     if (workspace) {
       const snapshot = await buildWorkspaceSnapshot(workspace)
       parts.push(snapshot)
     }
-
     if (mode === 'github' && isTokenValid && selectedRepo) {
       const { owner, repo } = parseRepoFullName(selectedRepo)
       try {
@@ -147,18 +90,7 @@ export function AgentPanel({
         parts.push(`\n\n[Erreur GitHub tree: ${e.message}]`)
       }
     }
-
     return parts.join('\n')
-  }
-
-  const extractAction = (text: string) => {
-    const match = text.match(/```(?:github-action|action|edit_file|edit_buffer)\s*([\s\S]*?)```/)
-    if (!match) return null
-    try {
-      return JSON.parse(match[1].trim())
-    } catch {
-      return null
-    }
   }
 
   const runAction = async (action: any, currentTour: number): Promise<string> => {
@@ -208,7 +140,6 @@ export function AgentPanel({
 
     if (!isTokenValid || !selectedRepo) return '❌ GitHub non connecté'
     const { owner, repo } = parseRepoFullName(selectedRepo)
-
     if (action.action === 'list_files') {
       const files = await githubListFiles({ token: githubToken, owner, repo, path: action.path || '' })
       return files.map((f) => `${f.type === 'dir' ? '📁' : '📄'} ${f.path}`).join('\n')
@@ -225,13 +156,12 @@ export function AgentPanel({
       await githubPatchFile({ token: githubToken, owner, repo, path: action.path, oldText: action.oldText, newText: action.newText, message: action.message })
       return `✅ Patch GitHub : ${action.path}`
     }
-
     return `❌ Action inconnue : ${action.action}`
   }
 
   const workerTurn = async (currentTour: number, userMission: string, previousFeedback: string): Promise<{ output: string; actionResult: string }> => {
     const context = await buildContext('local')
-    const system = `Tu es un agent worker dans TrappistCode IDE. Mission utilisateur : ${userMission}
+    const system = `Tu es un agent worker dans TrappistCode IDE. Mission : ${userMission}
 
 CONTEXTE LOCAL:
 ${context}
@@ -240,22 +170,25 @@ INSTRUCTIONS:
 - Fais UNE SEULE modification par tour.
 - Explique brièvement ce que tu fais.
 - Termine toujours par un bloc action JSON valide :
-  - { "action": "edit_file", "path": "...", "oldText": "...", "newText": "..." }
-  - { "action": "create_file", "path": "...", "content": "..." }
-  - { "action": "edit_buffer", "oldText": "...", "newText": "..." }
-- Ne réécris PAS un fichier entier sauf si c'est nécessaire.
+  { "action": "edit_file" | "create_file" | "edit_buffer", ... }
+- Ne réécris PAS un fichier entier sauf nécessaire.
+- Si mission terminée => action { "action": "done" }
 - Réponds en français.`
 
-    const output = await callModel(selectedAgent, system, previousFeedback || 'Exécute la mission.')
+    const { text: output } = await callAgentModel(selectedAgent, [
+      { role: 'system', content: system },
+      { role: 'user', content: previousFeedback || 'Exécute la mission.' },
+    ], { fileContent, filePath: openPath || '' })
+
     const action = extractAction(output)
-    const actionResult = action ? await runAction(action, currentTour) : '〔pas d'action〕'
+    const actionResult = action ? await runAction(action, currentTour) : '〔pas d\'action〕'
     addLog(currentTour, selectedAgent, 'worker', action?.action || 'chat', output)
     return { output, actionResult }
   }
 
-  const reviewTurn = async (currentTour: number, mission: string, lastWorkerOutput: string, lastActionResult: string, model: string): Promise<string> => {
+  const reviewTurn = async (currentTour: number, mission: string, lastWorkerOutput: string, lastActionResult: string, model: AgentModelKey): Promise<string> => {
     const context = await buildContext(isTokenValid && selectedRepo ? 'github' : 'local')
-    const system = `Tu es Kimi, reviewer senior dans TrappistCode IDE. Tu interviens tous les 10 tours pour vérifier le travail d'un agent worker.
+    const system = `Tu es Kimi, reviewer senior dans TrappistCode IDE. Tu interviens pour vérifier le travail d'un agent worker.
 
 CONTEXTE:
 ${context}
@@ -269,13 +202,16 @@ Résultat:
 ${lastActionResult}
 
 INSTRUCTIONS:
-1. Vérifie la qualité, la sécurité, les bugs, la cohérence avec le projet.
-2. Si c'est bon, réponds exactement : REVIEW_OK
-3. Si tu vois des problèmes, réponds REVIEW_NEEDED puis liste les corrections concrètes sous forme de prompt prêt à être donné au worker.
-4. Tu peux aussi proposer des améliorations ou des recherches.
-5. Sois chirurgical et minimaliste.`
+1. Vérifie qualité, sécurité, bugs, cohérence.
+2. Si OK exactement : REVIEW_OK
+3. Sinon REVIEW_NEEDED puis liste corrections concrètes pour le worker.
+4. Sois chirurgical.`
 
-    const out = await callModel(model, system, 'Vérifie le travail du dernier tour.', true)
+    const { text: out } = await callAgentModel(model, [
+      { role: 'system', content: system },
+      { role: 'user', content: 'Vérifie le travail du dernier tour.' },
+    ], { timeout: 300_000, fileContent, filePath: openPath || '' })
+
     addLog(currentTour, model, 'reviewer', out.startsWith('REVIEW_OK') ? 'OK' : 'NEEDED', out)
     return out
   }
@@ -283,6 +219,7 @@ INSTRUCTIONS:
   const runMission = async () => {
     if (!input.trim() || running) return
     const mission = input
+    cancelRef.current = false
     setMessages([])
     setLogs([])
     setTour(0)
@@ -293,7 +230,7 @@ INSTRUCTIONS:
     let feedback = ''
 
     try {
-      while (currentTour < MAX_AUTO_STEPS) {
+      while (currentTour < MAX_AUTO_STEPS && !cancelRef.current) {
         currentTour++
         setTour(currentTour)
         setMessages((prev) => [...prev, `— Tour ${currentTour} — Worker: ${selectedAgent}`])
@@ -301,13 +238,17 @@ INSTRUCTIONS:
         const { output, actionResult } = await workerTurn(currentTour, mission, feedback)
         setMessages((prev) => [...prev, `🛠 ${actionResult}`, output])
 
+        if (output.toLowerCase().includes('"action": "done"') || output.includes('{ "action": "done" }')) {
+          setMessages((prev) => [...prev, `🏁 Mission terminée au tour ${currentTour}`])
+          break
+        }
+
         const shouldReview = kimiReviewer && currentTour % 10 === 0
         if (shouldReview) {
           setMessages((prev) => [...prev, `— Review Kimi tour ${currentTour}`])
           const review = await reviewTurn(currentTour, mission, output, actionResult, 'kimi')
           setMessages((prev) => [...prev, `👁 Kimi: ${review.slice(0, 500)}${review.length > 500 ? '…' : ''}`])
-
-          if (review.includes('REVIEW_NEEDED')) {
+          if (review.includes('REVIEW_NEEDED') && !cancelRef.current) {
             feedback = `Corrections demandées par Kimi au tour ${currentTour}:\n${review}`
             continue
           }
@@ -318,9 +259,9 @@ INSTRUCTIONS:
           if (fallbackReview.includes('REVIEW_NEEDED')) {
             setMessages((prev) => [...prev, `👁 Gemma signale : ${fallbackReview.slice(0, 300)}…`])
             if (kimiReviewer) {
-              feedback = `Gemma a signalé un problème, Kimi va vérifier au prochain tour multiple de 10. Continue d'améliorer ce point : ${fallbackReview}`
+              feedback = `Gemma a signalé un problème au tour ${currentTour}. Kimi vérifiera au prochain multiple de 10. En attendant, corrige si possible.`
             } else {
-              feedback = `Corrections suggérées par Gemma : ${fallbackReview}`
+              feedback = `Corrections suggérées par Gemma au tour ${currentTour}:\n${fallbackReview}`
               continue
             }
           }
@@ -333,10 +274,12 @@ INSTRUCTIONS:
     } finally {
       setLoading(false)
       setRunning(false)
+      cancelRef.current = false
     }
   }
 
   const stop = () => {
+    cancelRef.current = true
     setRunning(false)
     setLoading(false)
   }
@@ -348,24 +291,24 @@ INSTRUCTIONS:
           <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>TrappistAI Multi-Agent</span>
           <label style={styles.check}>
             <input type="checkbox" checked={kimiReviewer} onChange={(e) => setKimiReviewer(e.target.checked)} />
-            Kimi /10 tours
+            Kimi /10
           </label>
           <label style={styles.check}>
             <input type="checkbox" checked={gemmaFallback} onChange={(e) => setGemmaFallback(e.target.checked)} />
-            Gemma fallback
+            Gemma /5
           </label>
         </div>
         <span style={{ fontSize: '11px', color: 'var(--tc-text-muted)' }}>Tour {tour}</span>
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', borderBottom: '1px solid var(--tc-border)' }}>
-        <span style={{ fontSize: '11px', color: 'var(--tc-text-muted)' }}>Auto intervalle (min)</span>
+        <span style={{ fontSize: '11px', color: 'var(--tc-text-muted)' }}>Auto (sec)</span>
         <input
           type="number"
           min={0}
-          value={intervalMinutes}
-          onChange={(e) => setIntervalMinutes(Number(e.target.value))}
-          style={{ width: 60, background: 'var(--tc-bg-elevated)', border: '1px solid var(--tc-border)', color: 'var(--tc-text)', borderRadius: 3, padding: 4, fontSize: 12 }}
+          value={intervalSeconds}
+          onChange={(e) => setIntervalSeconds(Number(e.target.value))}
+          style={{ width: 70, background: 'var(--tc-bg-elevated)', border: '1px solid var(--tc-border)', color: 'var(--tc-text)', borderRadius: 3, padding: 4, fontSize: 12 }}
         />
       </div>
 
@@ -483,7 +426,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 16px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace',
+    fontFamily: "'Courier New', Consolas, monospace",
   },
   stopBtn: {
     backgroundColor: 'var(--tc-danger)',
