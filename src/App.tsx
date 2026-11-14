@@ -85,28 +85,51 @@ function App() {
     refreshPreview()
   }, [refreshPreview])
 
-  const requestDirectory = async () => {
+  const requestDirectory = async (fallbackName: string): Promise<string> => {
     if (!('showDirectoryPicker' in window)) {
       throw new Error('File System Access API non supportée. Utilise Chrome/Edge.')
     }
     const handle = await (window as any).showDirectoryPicker()
-    const path = handle.name
-    localApi.setWorkspace(path)
-    await localApi.listFiles('')
-    addWorkspace(path, path)
-    setRefreshKey((k) => k + 1)
+    const name = handle?.name || fallbackName || 'workspace'
+
+    if ('resolve' in handle && pathLooksRelative(name)) {
+      try {
+        const resolved = await (handle as any).resolve(handle)
+        if (typeof resolved === 'string' && resolved.includes(':\\')) {
+          return resolved
+        }
+      } catch { /* ignore */ }
+    }
+
+    const absPath = window.prompt(`Chemin absolu du dossier « ${name} » :`, 'C:\\Users\\Djaf\\' + sanitizeName(name))
+    if (!absPath) throw new Error('Aucun chemin fourni')
+    return absPath.trim()
+  }
+
+  function pathLooksRelative(p: string) {
+    return p && !p.includes(':\\') && !p.startsWith('/') && !p.startsWith('\\')
+  }
+
+  function sanitizeName(n: string) {
+    return (n || 'workspace').replace(/[<>:"/\\|?*]+/g, '_').slice(0, 60)
   }
 
   const handleAddWorkspace = async () => {
     try {
-      await requestDirectory()
-    } catch (e: any) {
-      const input = window.prompt('Chemin absolu du dossier projet :')
-      if (!input) return
-      localApi.setWorkspace(input)
+      const absPath = await requestDirectory('nouveau-projet')
+      localApi.setWorkspace(absPath)
       await localApi.listFiles('')
-      addWorkspace(input)
+      addWorkspace(absPath)
       setRefreshKey((k) => k + 1)
+    } catch (e: any) {
+      if (e.message?.includes('non supportée')) {
+        const input = window.prompt('Chemin absolu du dossier projet :', 'C:\\Users\\Djaf\\MonProjet')
+        if (!input) return
+        localApi.setWorkspace(input.trim())
+        await localApi.listFiles('')
+        addWorkspace(input.trim())
+        setRefreshKey((k) => k + 1)
+      }
     }
   }
 
@@ -152,7 +175,7 @@ function App() {
     <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Agents</div>
       <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)' }}>
-        Local: Gemma (Ollama) + DeepSeek/Qwen via localhost:8000/ask
+        Local: Gemma (Ollama) via localhost:8000/ask
       </div>
 
       <label style={styles.check}>
