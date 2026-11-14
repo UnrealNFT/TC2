@@ -83,12 +83,14 @@ function createWordCompletions(files: OpenFile[], activePath: string | null) {
     const extMap: Record<string, string> = {
       js: 'js', jsx: 'js', ts: 'ts', tsx: 'ts',
       html: 'html', htm: 'html', css: 'css',
-      py: 'py', json: 'json', md: 'markdown', markdown: 'markdown',
+      py: 'py', json: 'json',
     }
-    const key = extMap[ext] || 'js'
+    const key = extMap[ext]
 
     const options = Array.from(tokens).map((label) => ({ label, type: 'text' }))
-    options.push(...snippets[key].map((label) => ({ label, type: 'keyword' as const, apply: label })))
+    if (key && key in snippets) {
+      options.push(...snippets[key].map((label) => ({ label, type: 'keyword' as const, apply: label })))
+    }
     options.push(
       ...files.map((f) => ({ label: f.path, type: 'type' as const })),
     )
@@ -101,16 +103,32 @@ function createWordCompletions(files: OpenFile[], activePath: string | null) {
 }
 
 function avecLesDeux(local: CompletionSource): CompletionSource {
-  return (context: CompletionContext) => {
+  return async (context: CompletionContext): Promise<CompletionResult | null> => {
     const sources: CompletionSource[] = [
       local,
       ...context.state.languageDataAt<CompletionSource>('autocomplete', context.pos),
     ]
-    const suite = (i: number): Promise<CompletionResult | null> => {
-      if (i >= sources.length) return Promise.resolve(null)
-      return Promise.resolve(sources[i](context)).then((res) => res ?? suite(i + 1))
+    const results: CompletionResult[] = []
+    let baseFrom = context.pos
+
+    await Promise.all(sources.map(async (source) => {
+      try {
+        const res = await Promise.resolve(source(context))
+        if (res) {
+          baseFrom = Math.min(baseFrom, res.from)
+          results.push(res)
+        }
+      } catch {
+        // source défaillante ignorée
+      }
+    }))
+
+    if (results.length === 0) return null
+
+    return {
+      from: baseFrom,
+      options: results.flatMap((r) => r.options),
     }
-    return suite(0)
   }
 }
 
@@ -166,7 +184,7 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
         keymap.of([
           { key: 'Ctrl-Space', run: startCompletion, preventDefault: true },
           {
-            key: 'F12',
+            key: 'Alt-F12',
             run: (view: any) => {
               void handleGoToDefinition(view)
               return true
