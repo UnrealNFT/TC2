@@ -50,7 +50,17 @@ class AskRequest(BaseModel):
 
 class AgentRequest(BaseModel):
     objectif: str
+    workspace: str = ""
     max_tours: int = 0
+
+
+def _set_workspace(path: str = ""):
+    """Initialise le dossier de travail de l'agent."""
+    if path:
+        tools.set_root(path)
+    else:
+        tools.ROOT = os.path.abspath(os.environ.get("TRAPPIST_WORKSPACE", os.getcwd()))
+        os.makedirs(tools.ROOT, exist_ok=True)
 
 
 def extraire_dossier(question: str) -> str:
@@ -146,11 +156,10 @@ def callback(tour: int, action: dict, resultat: str):
     TOURS.append({"tour": tour, "action": nom, "pensee": ligne})
 
 
-def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str):
+def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str, workspace: str = ""):
     global AGENT_RUNNING
     try:
-        if path:
-            print(tools.set_root(path))
+        _set_workspace(workspace or path)
         plan = call_kimi(objectif) if use_kimi else ""
         full = objectif
         if plan:
@@ -197,21 +206,24 @@ async def ask(req: AskRequest):
     if decision["continu"]:
         threading.Thread(
             target=lancer_agent,
-            args=(req.question, True, decision["kimi"], decision["path"]),
+            args=(req.question, True, decision["kimi"], decision["path"], ""),
             daemon=True,
         ).start()
         return {"response": decision["reply"], "final": decision["reply"], "reasoning": decision["reply"], "mode": "code", "status": "running"}
 
-    await asyncio.to_thread(lancer_agent, req.question, False, decision["kimi"], decision["path"])
+    await asyncio.to_thread(lancer_agent, req.question, False, decision["kimi"], decision["path"], "")
     texte = _texte_tours()
     return {"response": texte, "final": texte, "reasoning": texte, "mode": "code", "status": "done"}
 
 
 @app.post("/agent/run")
 async def run_agent(req: AgentRequest):
+    global AGENT_RUNNING
     TOURS.clear()
-    resume = agent_loop.boucle(req.objectif, max_tours=req.max_tours, commit_chaque=5, callback=callback, continu=False)
-    return {"resume": resume, "status": "done", "tours": list(TOURS)}
+    with AGENT_LOCK:
+        AGENT_RUNNING = True
+    await asyncio.to_thread(lancer_agent, req.objectif, False, False, "", req.workspace)
+    return {"resume": _texte_tours(), "status": "done", "tours": list(TOURS)}
 
 
 @app.get("/agent/status")
