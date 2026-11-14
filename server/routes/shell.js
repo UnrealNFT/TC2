@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const router = Router()
 
-const ALLOWED_COMMANDS = ['npm', 'node', 'npx', 'yarn', 'pnpm', 'git', 'python', 'python3', 'tsc', 'oxlint']
+const ALLOWED_COMMANDS = ['npm', 'node', 'npx', 'yarn', 'pnpm', 'git', 'python', 'python3', 'tsc', 'oxlint', 'powershell', 'cmd', 'bash', 'sh']
 const BLOCKED_ARGS = ['&&', '||', ';', '|', '<', '>', '`', '$', '{', '}']
 
 function resolveBase(req) {
@@ -38,7 +38,7 @@ router.post('/run', async (req, res) => {
   const cwd = path.resolve(base)
 
   try {
-    const child = spawn(cmd, mergedArgs, { cwd, shell: false })
+    const child = spawn(cmd, mergedArgs, { cwd, shell: process.platform === 'win32' })
     let stdout = ''
     let stderr = ''
 
