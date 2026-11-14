@@ -147,7 +147,7 @@ function App() {
       await localApi.listFiles('')
       addWorkspace(absPath)
       setRefreshKey((k) => k + 1)
-      showToast(`Workspace ouvert : ${absPath}`)
+      showToast(`Dossier ouvert : ${absPath}`)
     } catch (e: any) {
       console.error(e)
       const fallback = window.prompt('Chemin absolu du dossier projet :', 'C:\\Users\\Djaf\\MonProjet')
@@ -157,7 +157,7 @@ function App() {
         await localApi.listFiles('')
         addWorkspace(fallback.trim())
         setRefreshKey((k) => k + 1)
-        showToast(`Workspace ouvert : ${fallback.trim()}`)
+        showToast(`Dossier ouvert : ${fallback.trim()}`)
       } catch (e2: any) {
         showToast(`Impossible d'ouvrir : ${e2.message}`)
       }
@@ -212,13 +212,13 @@ function App() {
   }
 
   const exportZip = async () => {
-    if (!activePath) return showToast('Aucun workspace actif')
+    if (!activePath) return showToast('Aucun dossier actif')
     try {
       const blob = await localApi.exportZip()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${activePath.split(/[/\\]/).pop() || 'trappist-export'}.zip`
+      a.download = `${pathBasename(activePath)}.zip`
       a.click()
       URL.revokeObjectURL(url)
       showToast('Export ZIP téléchargé')
@@ -228,7 +228,7 @@ function App() {
   }
 
   const importZip = async () => {
-    if (!activePath) return showToast('Aucun workspace actif')
+    if (!activePath) return showToast('Aucun dossier actif')
     const input = document.createElement('input')
     input.type = 'file'
     input.accept = '.zip'
@@ -238,12 +238,16 @@ function App() {
       try {
         await localApi.importZip(file)
         setRefreshKey((k) => k + 1)
-        showToast('Workspace importé')
+        showToast('Dossier importé')
       } catch (err: any) {
         showToast(`Erreur import : ${err.message}`)
       }
     }
     input.click()
+  }
+
+  const pathBasename = (p: string) => {
+    return p.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'export'
   }
 
   const applyEdit = useCallback((content: string) => {
@@ -296,10 +300,10 @@ function App() {
       </select>
 
       <button onClick={exportZip} style={{ ...styles.btn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }}>
-        📦 Exporter workspace
+        📦 Exporter ce dossier en ZIP
       </button>
       <button onClick={importZip} style={{ ...styles.btn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }}>
-        📥 Importer ZIP
+        📥 Importer un ZIP ici
       </button>
     </div>
   ) : null
@@ -316,7 +320,7 @@ function App() {
           <span style={{ ...styles.badge, color: backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)', borderColor: backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)' }}>
             {backendOk ? '● backend' : '○ backend OFF'}
           </span>
-          {activePath && <span style={{ ...styles.badge, color: 'var(--tc-text-muted)' }} title={activePath}>📁 {activePath.split(/[/\\]/).pop()}</span>}
+          {activePath && <span style={{ ...styles.badge, color: 'var(--tc-text-muted)' }} title={activePath}>📁 {pathBasename(activePath)}</span>}
           {isTokenValid && <span style={{ ...styles.badge, color: '#58a6ff', borderColor: '#58a6ff' }}>🐙 GitHub</span>}
           {kimiEnabled && <span style={{ ...styles.badge, color: '#7ee787', borderColor: '#7ee787' }}>🌙 Kimi</span>}
         </div>
@@ -417,7 +421,7 @@ function App() {
       </div>
 
       <div style={styles.statusBar}>
-        <span>{activePath ? activePath : 'Aucun workspace'}</span>
+        <span>{activePath ? activePath : 'Aucun dossier ouvert'}</span>
         {selectedRepo && <span>{selectedRepo}</span>}
         {activeFilePath && <span>{activeFilePath}</span>}
       </div>
