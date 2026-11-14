@@ -6,6 +6,26 @@ export function parseRepoFullName(fullName: string) {
 }
 
 /**
+ * Liste les repos de l'utilisateur connecté
+ */
+export async function listUserRepos(token: string) {
+  const res = await axios.get('https://api.github.com/user/repos?per_page=100&sort=updated', {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  })
+  return res.data as Array<{
+    id: number
+    full_name: string
+    private: boolean
+    html_url: string
+    description: string | null
+  }>
+}
+
+/**
  * Crée ou met à jour un fichier sur GitHub (commit auto)
  */
 export async function createFile(params: {
@@ -128,6 +148,31 @@ export async function readFile(params: {
     content,
     sha: res.data.sha,
   }
+}
+
+/**
+ * Récupère l'arborescence complète d'un repo
+ */
+export async function getRepoTree(params: { token: string; owner: string; repo: string; recursive?: boolean }) {
+  const { token, owner, repo, recursive = true } = params
+  const url = `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent('HEAD')}?recursive=${recursive ? 1 : 0}`
+
+  const res = await axios.get(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
+  })
+
+  return res.data.tree as Array<{
+    path: string
+    mode: string
+    type: string
+    sha: string
+    size?: number
+    url: string
+  }>
 }
 
 /**
