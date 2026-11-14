@@ -1,23 +1,38 @@
 import { useState } from 'react'
+import { localApi } from '../services/localApi'
 
 export function TerminalPanel() {
   const [lines, setLines] = useState<string[]>([
-    '> TrappistCode terminal — prêt pour commandes (expérimental)',
-    '> Prochainement : exécution shell sécurisée via backend.',
+    '> TrappistCode terminal',
+    '> Commandes autorisées : npm, node, npx, yarn, pnpm, git, python, python3, tsc, oxlint',
   ])
   const [input, setInput] = useState('')
+  const [running, setRunning] = useState(false)
 
-  const run = () => {
-    if (!input.trim()) return
-    setLines((prev) => [...prev, `> ${input}`, 'Commande non exécutée — backend shell en cours d\'intégration.'])
+  const run = async () => {
+    if (!input.trim() || running) return
+    const cmd = input.trim()
+    setLines((prev) => [...prev, `$ ${cmd}`])
     setInput('')
+    setRunning(true)
+
+    try {
+      const res = await localApi.runShell(cmd)
+      if (res.stdout) setLines((prev) => [...prev, res.stdout])
+      if (res.stderr) setLines((prev) => [...prev, `stderr: ${res.stderr}`])
+      setLines((prev) => [...prev, `[exit ${res.code ?? '?'}]`])
+    } catch (e: any) {
+      setLines((prev) => [...prev, `❌ ${e.response?.data?.error || e.message}`])
+    } finally {
+      setRunning(false)
+    }
   }
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, backgroundColor: 'var(--tc-bg)' }}>
       <div style={{ flex: 1, overflow: 'auto', padding: '12px', fontSize: '12px', whiteSpace: 'pre-wrap' }}>
         {lines.map((l, i) => (
-          <div key={i} style={{ color: l.startsWith('>') ? 'var(--tc-primary)' : 'var(--tc-text)' }}>{l}</div>
+          <div key={i} style={{ color: l.startsWith('$') ? 'var(--tc-primary)' : l.startsWith('❌') ? 'var(--tc-danger)' : 'var(--tc-text)' }}>{l}</div>
         ))}
       </div>
       <div style={{ display: 'flex', padding: '8px', borderTop: '1px solid var(--tc-border)' }}>
@@ -26,6 +41,7 @@ export function TerminalPanel() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
+          disabled={running}
           style={{
             flex: 1,
             background: 'transparent',
