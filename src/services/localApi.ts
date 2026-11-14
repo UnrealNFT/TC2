@@ -98,4 +98,25 @@ export const localApi = {
   createProject(name: string, template: string) {
     return axios.post(`${API}/api/templates/create`, { name, template, base })
   },
+
+  exportZip(): Promise<Blob> {
+    return axios.get(`${API}/api/zip/export${params({ base })}`, { responseType: 'blob' }).then((r) => r.data as Blob)
+  },
+
+  importZip(file: File): Promise<{ ok: boolean; path: string }> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = async () => {
+        try {
+          const base64 = (reader.result as string).split(',')[1]
+          const res = await axios.post(`${API}/api/zip/import`, { zipBase64: base64, base })
+          resolve(res.data)
+        } catch (e) {
+          reject(e)
+        }
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
+    })
+  },
 }
