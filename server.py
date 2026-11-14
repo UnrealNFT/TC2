@@ -51,7 +51,7 @@ class AskRequest(BaseModel):
 class AgentRequest(BaseModel):
     objectif: str
     workspace: str = ""
-    max_tours: int = 0
+    max_tours: int = 20
 
 
 def _set_workspace(path: str = ""):
@@ -156,7 +156,7 @@ def callback(tour: int, action: dict, resultat: str):
     TOURS.append({"tour": tour, "action": nom, "pensee": ligne})
 
 
-def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str, workspace: str = ""):
+def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str, workspace: str = "", max_tours: int = 20):
     global AGENT_RUNNING
     try:
         _set_workspace(workspace or path)
@@ -164,7 +164,7 @@ def lancer_agent(objectif: str, continu: bool, use_kimi: bool, path: str, worksp
         full = objectif
         if plan:
             full += "\n\nPLAN KIMI, à suivre. Tu écris les fichiers toi-même, un par un :\n" + plan[:2000]
-        agent_loop.boucle(full, max_tours=0, commit_chaque=5, callback=callback, continu=continu)
+        agent_loop.boucle(full, max_tours=max_tours, commit_chaque=5, callback=callback, continu=continu)
     except Exception as e:
         ligne = f"[erreur] {e}"
         TOURS.append({"tour": 0, "action": "erreur", "pensee": ligne})
@@ -206,12 +206,12 @@ async def ask(req: AskRequest):
     if decision["continu"]:
         threading.Thread(
             target=lancer_agent,
-            args=(req.question, True, decision["kimi"], decision["path"], ""),
+            args=(req.question, True, decision["kimi"], decision["path"], "", 20),
             daemon=True,
         ).start()
         return {"response": decision["reply"], "final": decision["reply"], "reasoning": decision["reply"], "mode": "code", "status": "running"}
 
-    await asyncio.to_thread(lancer_agent, req.question, False, decision["kimi"], decision["path"], "")
+    await asyncio.to_thread(lancer_agent, req.question, False, decision["kimi"], decision["path"], "", 20)
     texte = _texte_tours()
     return {"response": texte, "final": texte, "reasoning": texte, "mode": "code", "status": "done"}
 
@@ -222,7 +222,8 @@ async def run_agent(req: AgentRequest):
     TOURS.clear()
     with AGENT_LOCK:
         AGENT_RUNNING = True
-    await asyncio.to_thread(lancer_agent, req.objectif, False, False, "", req.workspace)
+    mt = req.max_tours if req.max_tours and req.max_tours > 0 else 20
+    await asyncio.to_thread(lancer_agent, req.objectif, False, False, "", req.workspace, mt)
     return {"resume": _texte_tours(), "status": "done", "tours": list(TOURS)}
 
 
