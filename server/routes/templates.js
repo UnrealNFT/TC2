@@ -74,8 +74,16 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
   }
 }
 
+function decodeBase(raw) {
+  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
+  let s = typeof raw === 'string' ? raw : String(raw)
+  try { s = decodeURIComponent(s) } catch { /* ignore */ }
+  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
+  return path.resolve(s)
+}
+
 function resolveBase(req) {
-  return req.body?.base || req.query?.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  return decodeBase(req.body?.base ?? req.query?.base)
 }
 
 router.get('/list', (_req, res) => {
@@ -100,7 +108,7 @@ router.post('/create', async (req, res) => {
     }
     res.json({ ok: true, path: projectPath })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
