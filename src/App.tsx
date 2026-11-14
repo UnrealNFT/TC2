@@ -28,6 +28,8 @@ function App() {
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
 
+  void setSelectedRepo // garde la setter accessible pour éviter unused var
+
   useEffect(() => {
     localApi.health().then(() => setBackendOk(true)).catch(() => setBackendOk(false))
   }, [])
@@ -141,7 +143,7 @@ function App() {
         }}
       />
       <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)' }}>
-        Settings avancés en construction…
+        Repo GitHub géré côté Agent via actions `list_files` / `read_file`.
       </div>
     </div>
   ) : null
