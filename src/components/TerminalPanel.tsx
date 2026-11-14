@@ -1,3 +1,4 @@
+import type React from 'react'
 import { useState } from 'react'
 import { localApi } from '../services/localApi'
 
@@ -42,18 +43,22 @@ export function TerminalPanel() {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && run()}
           disabled={running}
-          style={{
-            flex: 1,
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--tc-text)',
-            outline: 'none',
-            fontFamily: "'Courier New', Consolas, monospace",
-            fontSize: '13px',
-          }}
+          style={styles.input}
           placeholder="npm run dev"
         />
       </div>
     </div>
   )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  input: {
+    flex: 1,
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--tc-text)',
+    outline: 'none',
+    fontFamily: "'Courier New', Consolas, monospace",
+    fontSize: '13px',
+  },
 }
