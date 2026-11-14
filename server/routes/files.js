@@ -4,9 +4,25 @@ import path from 'node:path'
 
 const router = Router()
 
+function decodeBase(raw) {
+  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
+  let s = typeof raw === 'string' ? raw : String(raw)
+  try {
+    s = decodeURIComponent(s)
+  } catch { /* ignore */ }
+  // certains clients envoient C:%5C -> C:\, d'autres C:/ -> C:\ sur Windows
+  if (process.platform === 'win32') {
+    s = s.replace(/\//g, '\\')
+    if (/^[a-zA-Z]:/.test(s) && s[1] === ':') {
+      // ok
+    }
+  }
+  return path.resolve(s)
+}
+
 function resolveBase(req) {
-  const base = req.body?.base || req.query?.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
-  return path.resolve(base)
+  const raw = req.body?.base ?? req.query?.base
+  return decodeBase(raw)
 }
 
 function safeJoin(base, target) {
