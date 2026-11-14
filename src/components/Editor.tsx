@@ -32,13 +32,14 @@ const LANGS: Record<string, string> = {
 }
 
 const btn: React.CSSProperties = {
-  backgroundColor: '#3c3c3c',
-  color: '#cccccc',
-  border: '1px solid #3e3e42',
+  backgroundColor: 'var(--tc-bg-elevated)',
+  color: 'var(--tc-text)',
+  border: '1px solid var(--tc-border)',
   borderRadius: '4px',
   padding: '4px 10px',
   fontSize: '12px',
   cursor: 'pointer',
+  fontFamily: "'Courier New', Consolas, monospace",
 }
 
 function langExtension(path: string | null) {
@@ -106,7 +107,7 @@ function Editor({
         flex: 1,
         display: 'flex',
         flexDirection: 'column',
-        backgroundColor: '#1e1e1e',
+        backgroundColor: 'var(--tc-bg)',
         minWidth: 0,
         minHeight: 0,
         overflow: 'hidden',
@@ -119,8 +120,8 @@ function Editor({
           alignItems: 'center',
           gap: '8px',
           padding: '6px 12px',
-          backgroundColor: '#2d2d30',
-          borderBottom: '1px solid #3e3e42',
+          backgroundColor: 'var(--tc-bg-soft)',
+          borderBottom: '1px solid var(--tc-border)',
           flexShrink: 0,
         }}
       >
@@ -128,8 +129,8 @@ function Editor({
           style={{
             flex: 1,
             fontSize: '12px',
-            fontFamily: 'Consolas, monospace',
-            color: openPath ? '#cccccc' : '#666',
+            fontFamily: "'Courier New', Consolas, monospace",
+            color: openPath ? 'var(--tc-text)' : 'var(--tc-text-dim)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
@@ -143,9 +144,11 @@ function Editor({
           disabled={!dirty || saving || !openPath}
           style={{
             ...btn,
-            backgroundColor: dirty ? '#0e639c' : '#3c3c3c',
+            backgroundColor: dirty ? 'var(--tc-primary)' : 'var(--tc-bg-elevated)',
+            color: dirty ? 'var(--tc-bg)' : 'var(--tc-text)',
             opacity: dirty && !saving && openPath ? 1 : 0.5,
             cursor: dirty && !saving && openPath ? 'pointer' : 'default',
+            fontWeight: dirty ? 600 : 400,
           }}
         >
           {saving ? '…' : `Push${dirty ? ' *' : ''}`}
@@ -191,7 +194,7 @@ function Editor({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#6e7681',
+              color: 'var(--tc-text-dim)',
               fontSize: 14,
             }}
           >
@@ -206,15 +209,17 @@ function Editor({
           display: 'flex',
           gap: '16px',
           padding: '3px 12px',
-          backgroundColor: '#007acc',
-          color: '#fff',
+          backgroundColor: 'var(--tc-bg-elevated)',
+          color: 'var(--tc-primary)',
           fontSize: '12px',
           flexShrink: 0,
+          borderTop: '1px solid var(--tc-border)',
+          fontFamily: "'Courier New', Consolas, monospace",
         }}
       >
         <span>{lines} lignes</span>
         <span>{langLabel}</span>
-        <span style={{ marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', color: 'var(--tc-text)' }}>
           {status}
           {dirty ? ' (non sauvegardé)' : ''}
         </span>
