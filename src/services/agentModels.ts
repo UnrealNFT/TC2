@@ -19,12 +19,6 @@ const WAVE_SPEED_MODELS: Record<string, string> = {
   'kimi-wavespeed': 'moonshotai/kimi-k3',
 }
 
-/**
- * Appelle un modèle selon sa clé.
- * - gemma/deepseek/kimi-wavespeed -> WaveSpeed
- * - kimi -> Kimi API officielle (utilise VITE_KIMI_KEY)
- * - trappist-local -> serveur local localhost:8000/ask
- */
 export async function callAgentModel(
   key: AgentModelKey,
   messages: ModelMessage[],
@@ -47,7 +41,7 @@ export async function callAgentModel(
     const res = await axios.post(
       'https://api.moonshot.cn/v1/chat/completions',
       {
-        model: 'kimi-k2-0711-preview', // Kimi 2.7 family
+        model: 'kimi-k2-0711-preview',
         messages,
         max_tokens: 4096,
         temperature: 0.4,
@@ -60,11 +54,10 @@ export async function callAgentModel(
         timeout: options.timeout || 300_000,
       }
     )
-    const text = res.data.choices?.[0]?.message?.content?.trim?.() || ''
+    const text = String(res.data.choices?.[0]?.message?.content || '').trim()
     return { text, truncated: false }
   }
 
-  // WaveSpeed fallback pour gemma/deepseek/kimi-wavespeed
   const model = WAVE_SPEED_MODELS[key] ?? WAVE_SPEED_MODELS.deepseek
   const res = await axios.post(
     '/api/wavespeed/chat/completions',
@@ -77,7 +70,7 @@ export async function callAgentModel(
       timeout: options.timeout || 180_000,
     }
   )
-  const text = res.data.choices?.[0]?.message?.content?.trim?.() || ''
+  const text = String(res.data.choices?.[0]?.message?.content || '').trim()
   return { text, truncated: false }
 }
 
