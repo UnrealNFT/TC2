@@ -6,6 +6,7 @@ import previewRouter from './routes/preview.js'
 import shellRouter from './routes/shell.js'
 import templatesRouter from './routes/templates.js'
 import searchRouter from './routes/search.js'
+import zipRouter from './routes/zip.js'
 
 const app = express()
 const PORT = process.env.PORT || 4269
@@ -19,9 +20,10 @@ app.use('/api/preview', previewRouter)
 app.use('/api/shell', shellRouter)
 app.use('/api/templates', templatesRouter)
 app.use('/api/search', searchRouter)
+app.use('/api/zip', zipRouter)
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', name: 'trappistcode-server' })
+  res.json({ status: 'ok', name: 'trappistcode-server', platform: process.platform })
 })
 
 app.listen(PORT, () => {
