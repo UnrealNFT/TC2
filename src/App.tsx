@@ -1,9 +1,8 @@
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { FileExplorer } from './components/FileExplorer'
 import { GitPanel } from './components/GitPanel'
 import { TabbedEditor } from './components/TabbedEditor'
-import { PreviewPanel } from './components/PreviewPanel'
 import { AgentPanel } from './components/AgentPanel'
 import { TerminalPanel } from './components/TerminalPanel'
 import { useWorkspace } from './hooks/useWorkspace'
@@ -90,11 +89,8 @@ function App() {
     if (!('showDirectoryPicker' in window)) {
       throw new Error('File System Access API non supportée. Utilise Chrome/Edge.')
     }
-    // @ts-ignore
-    const handle = await window.showDirectoryPicker()
+    const handle = await (window as any).showDirectoryPicker()
     const path = handle.name
-    // Note: on ne peut pas obtenir le vrai chemin absolu côté navigateur.
-    // On garde le nom comme workspace, le backend fallbacksur cwd ou TRAPPIST_WORKSPACE.
     localApi.setWorkspace(path)
     await localApi.listFiles('')
     addWorkspace(path, path)
@@ -322,7 +318,8 @@ function FloatingPreview({ workspace, entry, initial, onClose }: { workspace: st
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragging || !dragRef.current) return
-      setPos((p) => ({ ...p, x: e.clientX - dragRef.current!.dx, y: e.clientY - dragRef.current!.dy }))
+      const ref = dragRef.current
+      setPos((p) => ({ ...p, x: e.clientX - ref.dx, y: e.clientY - ref.dy }))
     }
     const onUp = () => setDragging(false)
     window.addEventListener('mousemove', onMove)
@@ -332,6 +329,9 @@ function FloatingPreview({ workspace, entry, initial, onClose }: { workspace: st
       window.removeEventListener('mouseup', onUp)
     }
   }, [dragging])
+
+  const grow = () => setPos((p) => ({ ...p, w: p.w + 40, h: p.h + 40 }))
+  const shrink = () => setPos((p) => ({ ...p, w: Math.max(200, p.w - 40), h: Math.max(150, p.h - 40) }))
 
   return (
     <div
@@ -366,8 +366,8 @@ function FloatingPreview({ workspace, entry, initial, onClose }: { workspace: st
       >
         <span style={{ color: 'var(--tc-primary)' }}>{entry}</span>
         <div style={{ display: 'flex', gap: 4 }}>
-          <button onClick={() => setPos((p) => ({ ...p, w: p.w + 40, h: p.h + 40 }))} style={styles.ctlBtn}>+</button>
-          <button onClick={() => setPos((p) => ({ ...p, w: Math.max(200, p.w - 40), h: Math.max(150, p.h - 40) }))} style={styles.ctlBtn}>-</button>
+          <button onClick={grow} style={styles.ctlBtn}>+</button>
+          <button onClick={shrink} style={styles.ctlBtn}>-</button>
           <button onClick={onClose} style={styles.ctlBtn}>✕</button>
         </div>
       </div>
@@ -431,7 +431,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: "'Courier New', Consolas, monospace',
   },
   statusBar: {
     height: '28px',
