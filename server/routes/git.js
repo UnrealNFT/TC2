@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { simpleGit } from 'simple-git'
+import { existsSync } from 'node:fs'
 import path from 'node:path'
 
 const router = Router()
@@ -17,11 +18,20 @@ function getGit(req) {
   return simpleGit(path.resolve(base))
 }
 
+function isGitRepo(base) {
+  return existsSync(path.join(base, '.git'))
+}
+
 router.get('/status', async (req, res) => {
+  const base = decodeBase(req.query?.base ?? req.body?.base)
   try {
+    if (!isGitRepo(base)) {
+      return res.json({ isRepo: false, branch: null, isClean: true, modified: [] })
+    }
     const git = getGit(req)
     const status = await git.status()
     res.json({
+      isRepo: true,
       branch: status.current,
       tracking: status.tracking,
       ahead: status.ahead,
