@@ -2,9 +2,11 @@ import axios from 'axios'
 
 const API = 'http://localhost:4269'
 
-let base = typeof process !== 'undefined' && process.env?.TRAPPIST_WORKSPACE
-            ? String(process.env.TRAPPIST_WORKSPACE)
-            : ''
+let base = ''
+
+export function setWorkspace(path: string) {
+  base = path
+}
 
 export interface FileData {
   path: string
@@ -20,21 +22,28 @@ export interface GitStatus {
   deleted: string[]
 }
 
+function params(obj: Record<string, string | number | undefined>) {
+  const url = new URLSearchParams()
+  Object.entries(obj).forEach(([k, v]) => {
+    if (v !== undefined) url.append(k, String(v))
+  })
+  return '?' + url.toString()
+}
+
 export const localApi = {
-  setWorkspace(path: string) {
-    base = path
-  },
+  setWorkspace,
 
   health() {
     return axios.get(`${API}/health`)
   },
 
   listFiles(path: string = '') {
-    return axios.get(`${API}/api/files/list`, { params: { path, base } }).then((r) => r.data as Array<{ name: string; path: string; type: string }>)
+    return axios.get(`${API}/api/files/list${params({ path, base })}`)
+      .then((r) => r.data as Array<{ name: string; path: string; type: string }>)
   },
 
   readFile(path: string): Promise<FileData> {
-    return axios.get(`${API}/api/files/read`, { params: { path, base } }).then((r) => r.data)
+    return axios.get(`${API}/api/files/read${params({ path, base })}`).then((r) => r.data)
   },
 
   writeFile(path: string, content: string) {
@@ -54,11 +63,11 @@ export const localApi = {
   },
 
   gitStatus(): Promise<GitStatus> {
-    return axios.get(`${API}/api/git/status`, { params: { base } }).then((r) => r.data)
+    return axios.get(`${API}/api/git/status${params({ base })}`).then((r) => r.data)
   },
 
   gitDiff() {
-    return axios.get(`${API}/api/git/diff`, { params: { base } }).then((r) => String(r.data.diff || ''))
+    return axios.get(`${API}/api/git/diff${params({ base })}`).then((r) => String(r.data.diff || ''))
   },
 
   gitAdd(path: string) {
@@ -82,7 +91,8 @@ export const localApi = {
   },
 
   runShell(command: string) {
-    return axios.post(`${API}/api/shell/run`, { command, base }).then((r) => r.data as { code?: number; stdout?: string; stderr?: string })
+    return axios.post(`${API}/api/shell/run`, { command, base })
+      .then((r) => r.data as { code?: number; stdout?: string; stderr?: string })
   },
 
   createProject(name: string, template: string) {
