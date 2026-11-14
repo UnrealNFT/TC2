@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { localApi } from '../services/localApi'
 import { buildWorkspaceSnapshot } from '../services/localSnapshot'
 import { callAgentModel, extractAction } from '../services/agentModels'
+import { searchWeb, searchGitHub } from '../services/agentSearch'
 import {
   createFile as githubCreateFile,
   parseRepoFullName,
@@ -65,7 +66,7 @@ export function AgentPanel({
     if (intervalRef.current) clearInterval(intervalRef.current)
     if (intervalSeconds > 0) {
       intervalRef.current = setInterval(() => {
-        if (!running && input.trim() && !cancelRef.current) runMission()
+        if (!running && input.trim() && !cancelRef.current) void runMission()
       }, intervalSeconds * 1000)
     }
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
@@ -93,8 +94,25 @@ export function AgentPanel({
     return parts.join('\n')
   }
 
-  const runAction = async (action: any, currentTour: number): Promise<string> => {
+  const doSearch = async (query: string) => {
+    try {
+      const [web, gh] = await Promise.all([
+        searchWeb(query).catch(() => null),
+        searchGitHub(query).catch(() => null),
+      ])
+      return `WEB:\n${web?.snippet || 'N/A'}\n\nGITHUB:\n${gh ? gh.repos.map((r) => `${r.name} ★${r.stars} — ${r.description || ''} — ${r.url}`).slice(0, 3).join('\n') : 'N/A'}`
+    } catch (e: any) {
+      return `Erreur recherche: ${e.message}`
+    }
+  }
+
+  const runAction = async (action: any): Promise<string> => {
     if (!action || !action.action) return 'Aucune action'
+
+    if (action.action === 'search') {
+      const results = await doSearch(action.query || input)
+      return `🔍 Recherche "${action.query || input}"\n${results}`
+    }
 
     if (action.action === 'edit_buffer') {
       if (!openPath) return '❌ Aucun fichier ouvert'
@@ -170,7 +188,8 @@ INSTRUCTIONS:
 - Fais UNE SEULE modification par tour.
 - Explique brièvement ce que tu fais.
 - Termine toujours par un bloc action JSON valide :
-  { "action": "edit_file" | "create_file" | "edit_buffer", ... }
+  { "action": "edit_file" | "create_file" | "edit_buffer" | "search", ... }
+- Pour rechercher sur le web/GitHub : { "action": "search", "query": "..." }
 - Ne réécris PAS un fichier entier sauf nécessaire.
 - Si mission terminée => action { "action": "done" }
 - Réponds en français.`
@@ -181,7 +200,7 @@ INSTRUCTIONS:
     ], { fileContent, filePath: openPath || '' })
 
     const action = extractAction(output)
-    const actionResult = action ? await runAction(action, currentTour) : '〔pas d\'action〕'
+    const actionResult = action ? await runAction(action) : '〔pas d\'action〕'
     addLog(currentTour, selectedAgent, 'worker', action?.action || 'chat', output)
     return { output, actionResult }
   }
@@ -205,7 +224,8 @@ INSTRUCTIONS:
 1. Vérifie qualité, sécurité, bugs, cohérence.
 2. Si OK exactement : REVIEW_OK
 3. Sinon REVIEW_NEEDED puis liste corrections concrètes pour le worker.
-4. Sois chirurgical.`
+4. Tu peux commander des recherches web/GitHub si besoin via une action { "action": "search", "query": "..." }.
+5. Sois chirurgical.`
 
     const { text: out } = await callAgentModel(model, [
       { role: 'system', content: system },
@@ -327,11 +347,11 @@ INSTRUCTIONS:
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && runMission()}
+          onKeyDown={(e) => e.key === 'Enter' && void runMission()}
           placeholder="Mission : crée/refactor/améliore…"
           style={styles.input}
         />
-        <button onClick={runMission} disabled={loading || !input.trim()} style={styles.sendBtn}>
+        <button onClick={() => void runMission()} disabled={loading || !input.trim()} style={styles.sendBtn}>
           {running ? 'En cours…' : 'Lancer'}
         </button>
         {running && <button onClick={stop} style={styles.stopBtn}>Stop</button>}
@@ -426,7 +446,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 16px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: "'Courier New', Consolas, monospace',
   },
   stopBtn: {
     backgroundColor: 'var(--tc-danger)',
@@ -435,7 +455,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     padding: '0 14px',
     cursor: 'pointer',
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: "'Courier New', Consolas, monospace',
   },
   logs: {
     maxHeight: '90px',
