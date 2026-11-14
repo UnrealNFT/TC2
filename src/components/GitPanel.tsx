@@ -51,7 +51,23 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
   }
 
   if (!activePath) {
-    return <div style={styles.empty}>Ouvre un projet avec Git</div>
+    return <div style={styles.empty}>Ouvre un dossier local pour voir Git.</div>
+  }
+
+  if (!status?.isRepo) {
+    return (
+      <div style={styles.container}>
+        <div style={styles.notice}>
+          Ce dossier n’est pas un repo Git.
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          <button onClick={() => act(() => localApi.gitInit())} style={styles.btn} disabled={loading}>Init repo</button>
+        </div>
+        <div style={{ color: 'var(--tc-text-dim)', fontSize: '11px', marginTop: '10px' }}>
+          Une fois initie, tu pourras stage, commit et push vers un repo GitHub.
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -124,6 +140,13 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: 'center',
     color: 'var(--tc-text-dim)',
     marginTop: '40px',
+  },
+  notice: {
+    padding: '10px',
+    borderRadius: '4px',
+    backgroundColor: 'var(--tc-bg-elevated)',
+    border: '1px solid var(--tc-border)',
+    color: 'var(--tc-text-dim)',
   },
   header: {
     display: 'flex',
