@@ -2,14 +2,18 @@
 
 """Cerveau de l'agent TrappistCode.
 
-Deux modèles, deux rôles :
-- Gemma planifie, discute et écrit le code. Elle reste chargée pendant la boucle.
-- DeepSeek ne sert qu'à controler() : il lit un fichier déjà écrit et dit s'il est bon.
-  Ollama décharge alors Gemma (7,6 Go) pour charger DeepSeek (5,6 Go), puis l'inverse
-  au tour suivant. C'est lent, mais c'est le seul moyen d'avoir un avis qui n'est pas
-  le modèle en train de se relire.
+Architecture :
+- Gemma 4 Uncensored (12B) : cerveau principal, planifie, discute, écrit le code.
+- DeepSeek / Qwen Uncensored : relecteur critique et contrôleur de fichiers.
+- Kimi K2.7 Code (WaveSpeed) : supervisor externe, appelé tous les 10 tours
+  ou quand Gemma est perdue. Max 30 appels par session.
+
+Stratégie VRAM Ollama :
+Gemma reste en mémoire pendant la boucle de code. DeepSeek est appelé uniquement
+pour controler() : Ollama décharge Gemma, charge DeepSeek, puis Gemma est
+rechargée au tour suivant. C'est lent mais donne un vrai avis externe.
 """
-import json, re
+import json, re, os, urllib.request
 import ollama
 
 # Noms exacts de ollama list. Le :latest de Gemma est obligatoire.
@@ -19,9 +23,9 @@ MODELE_RELECTEUR = "hf.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-her
 MODELE_PLANNER = MODELE_CERVEAU
 MODELE_CODER = MODELE_CERVEAU
 MODELE_REVIEWER = MODELE_RELECTEUR
+MODELE_KIMI = "moonshotai/kimi-k2.7-code"
 
-# Exemple de forme, pas une liste de fichiers à produire.
-# Les fichiers à créer dépendent de l'objectif de l'utilisateur.
+# Actions supportées par tools.py. Gemma NE doit PAS en inventer d'autres.
 SYSTEM_CODER = """Réponds UNIQUEMENT avec un objet JSON. Rien avant, rien après. Pas de ```.
 
 {"pensee": "court", "action": "write_file", "args": {"path": "index.html", "content": "<!doctype html>..."}}
@@ -31,7 +35,7 @@ N'appelle set_root que si l'objectif donne un autre chemin que celui déjà acti
 Tu suis l'objectif. Tu n'inventes pas de pages que personne n'a demandées.
 Chaque fichier s'écrit une fois. S'il existe déjà, tu passes au suivant, ou done.
 
-Actions :
+Actions disponibles :
 - write_file (path, content)
 - read_file (path)
 - delete_file (path)
@@ -39,13 +43,7 @@ Actions :
 - shell (cmd)
 - git (args)
 - commit_push (message)
-- create_github_repo (name, private, description)
 - set_root (path)
-- clone_repo (url, folder)
-- web_search (query)
-- github_search (query, search_type)
-- x_search (query)
-- telegram_search (query)
 - trappist_generate (kind, prompt, out_path)
 - done (resume)
 
@@ -53,14 +51,14 @@ Dossier vide : write_file tout de suite, jamais done.
 done seulement quand l'objectif est atteint.
 Pas de discussion. Pas de plan en prose. Pas de brouillon."""
 
-SYSTEM_REVIEWER = """Tu es un reviewer. 2 phrases en français : est-ce que l'action a avancé l'objectif, et quelle est la prochaine correction concrète. Pas de JSON."""
+SYSTEM_REVIEWER = """Tu es un reviewer uncensored. 2 phrases en français : est-ce que l'action a avancé l'objectif, et quelle est la prochaine correction concrète. Pas de JSON."""
 
 SYSTEM_CHAT = """Tu es l'assistant de TrappistCode.
 Réponds en français, 2 à 5 phrases, comme dans une discussion.
 Uniquement la réponse finale.
 Interdit : plan, brouillon, puces, Persona, Draft, Self-correction, JSON, code."""
 
-# DeepSeek doit répondre dans cette forme, et dans aucune autre.
+# DeepSeek / Qwen doivent répondre dans cette forme, et dans aucune autre.
 SYSTEM_CONTROLE = """Tu vérifies un fichier déjà écrit. Tu ne le réécris pas.
 Réponds UNIQUEMENT par ce JSON :
 {"ok": true, "raison": "court", "suite": "done"}
@@ -68,9 +66,32 @@ ok=false seulement s'il manque quelque chose d'essentiel DANS CE FICHIER, par ra
 suite = done, ou le prochain fichier à créer. Interdit de redemander le fichier qu'on te montre.
 Si le fichier est suffisant pour sa part de l'objectif, ok=true. N'invente pas de défauts."""
 
+SYSTEM_KIMI_SUPERVISOR = """Tu es Kimi, supervisor externe de TrappistCode.
+On te demande de jeter un œil sur l'état du projet et de guider Gemma/DeepSeek.
+Contexte : objectif utilisateur, structure des fichiers, derniers tours de l'agent.
+Réponds en francais, 5 à 12 phrases maximum.
+Donne :
+1. Un diagnostic de la situation
+2. Les anomalies/blockages
+3. Les prochaines 1 à 3 actions concrètes à faire
+4. Si l'objectif semble atteint, dis "done"
+Sois technique, percutant, sans langage de bois."""
+
+
+def _cle_wavespeed() -> str:
+    for nom in ("WAVESPEED_API_KEY", "VITE_WAVESPEED_KEY"):
+        if os.environ.get(nom):
+            return os.environ.get(nom).strip().strip('"')
+    env = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    if os.path.isfile(env):
+        for ligne in open(env, encoding="utf-8"):
+            if ligne.startswith("VITE_WAVESPEED_KEY=") or ligne.startswith("WAVESPEED_API_KEY="):
+                return ligne.split("=", 1)[1].strip().strip('"')
+    return ""
+
 
 def _chat(messages: list, num_predict: int, temperature: float, as_json: bool = False, modele: str = "") -> dict:
-    """Appelle Ollama. modele vaut Gemma par défaut. Passer MODELE_REVIEWER pour DeepSeek.
+    """Appelle Ollama. modele vaut Gemma par défaut. Passer MODELE_REVIEWER pour DeepSeek/Qwen.
 
     L'échelle d'essais existe parce que les builds Ollama ne supportent pas tous
     format=json ni think=False. On essaie le plus strict, puis on relâche.
@@ -101,7 +122,7 @@ def _texte(reponse: dict) -> str:
 
 
 def _objet_json(texte: str) -> dict:
-    """N'importe quel objet JSON, même sans clé action. Sert au contrôle DeepSeek."""
+    """N'importe quel objet JSON, même sans clé action. Sert au contrôle DeepSeek/Qwen."""
     if not texte:
         return {}
     texte = re.sub(r"```(?:json)?", "", texte).strip()
@@ -201,7 +222,7 @@ def planner(objectif: str, contexte: str) -> dict:
     return extraire_json(_texte(r))
 
 
-def decider(objectif: str, historique: list, contexte: str) -> dict:
+def decider(objectif: str, historique: list, contexte: str, guidance: str = "") -> dict:
     """Prochaine action. Salutation et question simple s'arrêtent ici, sans outil."""
     msg = objectif.strip().lower()
     if len(msg) < 12 and any(w in msg for w in ("yo", "salut", "bonjour", "hey", "coucou", "hello")):
@@ -229,9 +250,10 @@ def decider(objectif: str, historique: list, contexte: str) -> dict:
         f"OBJECTIF : {objectif}\n\n"
         f"FICHIERS :\n{contexte[:1800] or '(dossier vide)'}\n\n"
         f"HISTORIQUE :\n{hist}\n\n"
-        f"Un seul JSON. Si le dossier est vide, write_file."
-        f"{lecture}"
     )
+    if guidance:
+        prompt += f"GUIDAGE DU SUPERVISEUR KIMI :\n{guidance}\n\n"
+    prompt += f"Un seul JSON. Si le dossier est vide, write_file.{lecture}"
     data = _coder(prompt)
     vide = not contexte.strip() or contexte.strip() == "(dossier vide)"
     if vide and not historique and data.get("action") != "write_file":
@@ -267,7 +289,7 @@ def _oui(valeur) -> bool:
 
 
 def controler(objectif: str, chemin: str, contenu: str) -> dict:
-    """DeepSeek juge le fichier. Appelé par la boucle après un write_file réussi.
+    """DeepSeek/Qwen juge le fichier. Appelé après un write_file réussi.
 
     Retour :
     - ok True  : le fichier est gardé et verrouillé. On ne le réécrit plus.
@@ -298,25 +320,9 @@ def controler(objectif: str, chemin: str, contenu: str) -> dict:
     }
 
 
-import os, urllib.request
-
-MODELE_KIMI = "moonshotai/kimi-k2.7-code"
-
-
-def _cle_wavespeed() -> str:
-    for nom in ("WAVESPEED_API_KEY", "VITE_WAVESPEED_KEY"):
-        if os.environ.get(nom):
-            return os.environ[nom].strip().strip('"')
-    env = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
-    if os.path.isfile(env):
-        for ligne in open(env, encoding="utf-8"):
-            if ligne.startswith("VITE_WAVESPEED_KEY=") or ligne.startswith("WAVESPEED_API_KEY="):
-                return ligne.split("=", 1)[1].strip().strip('"')
-    return ""
-
-
 def secours_kimi(objectif: str, historique: list, contexte: str, raison: str) -> dict:
-    """Kimi K2.7 Code. Uniquement si Gemma n'a pas produit une action utilisable."""
+    """Kimi K2.7 Code. Uniquement si Gemma n'a pas produit une action utilisable.
+    C'est l'appel de secours : doute, JSON cassé, stuck."""
     cle = _cle_wavespeed()
     if not cle:
         return {"pensee": "pas de clé", "action": "done", "args": {"resume": "Kimi non appelé : clé WaveSpeed absente du .env."}}
@@ -348,3 +354,55 @@ def secours_kimi(objectif: str, historique: list, contexte: str, raison: str) ->
     except Exception as e:
         return {"pensee": "kimi en erreur", "action": "done", "args": {"resume": f"Kimi injoignable : {e}"}}
     return extraire_json(texte)
+
+
+def kimi_supervise(tour: int, objectif: str, historique: list, contexte: str) -> str:
+    """Appel régulier à Kimi (tous les 10 tours). Il regarde la structure et guide Gemma.
+    Renvoie du texte à injecter dans le prompt de Gemma."""
+    cle = _cle_wavespeed()
+    if not cle:
+        return ""
+    hist = "\n".join(f"- {a} => {str(r)[:200]}" for a, r in historique[-12:]) or "(début)"
+    # On récupère le contenu des derniers fichiers écrits pour contexte
+    fichiers_recents = []
+    for a, r in reversed(historique[-10:]):
+        if isinstance(a, str) and "write_file" in a:
+            chemin = a.split(" ", 1)[1] if " " in a else ""
+            try:
+                from . import tools
+                contenu = tools.read_file(chemin)
+                fichiers_recents.append((chemin, contenu[:1200]))
+            except Exception:
+                pass
+    bloc_fichiers = ""
+    for chemin, contenu in fichiers_recents[-3:]:
+        bloc_fichiers += f"\n--- {chemin} ---\n{contenu}\n"
+
+    body = json.dumps({
+        "model": MODELE_KIMI,
+        "temperature": 0.2,
+        "max_tokens": 1200,
+        "messages": [
+            {"role": "system", "content": SYSTEM_KIMI_SUPERVISOR},
+            {"role": "user", "content": (
+                f"TOUR ACTUEL : {tour}\n"
+                f"OBJECTIF : {objectif[:1200]}\n\n"
+                f"STRUCTURE DU DOSSIER :\n{contexte[:2000]}\n\n"
+                f"HISTORIQUE RÉCENT :\n{hist}\n\n"
+                f"DERNIERS FICHIERS ÉCRITS :\n{bloc_fichiers[:2500]}\n\n"
+                "Donne ton guidage."
+            )},
+        ],
+    }).encode()
+    req = urllib.request.Request(
+        "https://llm.wavespeed.ai/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {cle}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode())
+        return data["choices"][0]["message"]["content"][:2000]
+    except Exception as e:
+        print(f"[kimi_supervise] {e}")
+        return ""
