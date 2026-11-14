@@ -25,6 +25,7 @@ Your mission:
 
 If the answer is already good, say so and do not invent problems."""
 
+
 def cerveau(question: str, mode_construction: bool = False) -> str:
     print("→ Gemma réfléchit...")
     try:
@@ -67,6 +68,7 @@ Provide a clean final version."""
         return review["message"]["content"]
     except Exception as e:
         return f"Erreur relecteur: {e}\n\nRéponse Gemma:\n{reponse_gemma}"
+
 
 if __name__ == "__main__":
     question = input("Question : ")
