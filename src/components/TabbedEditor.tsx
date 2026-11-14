@@ -37,6 +37,11 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
   const active = files.find((f) => f.path === activePath)
   const [status, setStatus] = useState('')
 
+  const activeExtensions = useMemo(
+    () => (active ? [langExtension(active.path), oneDark] : []),
+    [active?.path]
+  )
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's' && activePath) {
@@ -107,7 +112,7 @@ export function TabbedEditor({ files, activePath, onActivate, onClose, onChange,
             value={active.content}
             height="100%"
             theme={oneDark}
-            extensions={useMemo(() => [langExtension(active.path), oneDark], [active.path])}
+            extensions={activeExtensions}
             onChange={(v) => onChange(active.path, v)}
             basicSetup={{
               lineNumbers: true,
