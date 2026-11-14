@@ -4,8 +4,16 @@ import path from 'node:path'
 
 const router = Router()
 
+function decodeBase(raw) {
+  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
+  let s = typeof raw === 'string' ? raw : String(raw)
+  try { s = decodeURIComponent(s) } catch { /* ignore */ }
+  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
+  return path.resolve(s)
+}
+
 function getGit(req) {
-  const base = req.query.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  const base = decodeBase(req.query?.base ?? req.body?.base)
   return simpleGit(path.resolve(base))
 }
 
@@ -26,17 +34,17 @@ router.get('/status', async (req, res) => {
       isClean: status.isClean(),
     })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
 router.get('/diff', async (req, res) => {
   try {
     const git = getGit(req)
-    const diff = req.query.path ? await git.diff([req.query.path]) : await git.diff()
+    const diff = req.query.path ? await git.diff([req.query.path as string]) : await git.diff()
     res.json({ diff })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -46,7 +54,7 @@ router.get('/diff-staged', async (req, res) => {
     const diff = await git.diff(['--cached'])
     res.json({ diff })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -56,7 +64,7 @@ router.post('/add', async (req, res) => {
     await git.add(req.body.path || '.')
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -66,7 +74,7 @@ router.post('/unstage', async (req, res) => {
     await git.reset(['HEAD', req.body.path || '.'])
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -78,7 +86,7 @@ router.post('/commit', async (req, res) => {
     })
     res.json({ ok: true, commit: result.commit })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -88,7 +96,7 @@ router.post('/push', async (req, res) => {
     await git.push(req.body.remote || 'origin', req.body.branch || 'HEAD')
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -98,7 +106,7 @@ router.post('/pull', async (req, res) => {
     await git.pull(req.body.remote || 'origin', req.body.branch || 'current')
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -111,7 +119,7 @@ router.get('/branches', async (req, res) => {
       branches: Object.keys(summary.branches),
     })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -122,7 +130,7 @@ router.post('/checkout', async (req, res) => {
     await git.checkout(options)
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -132,7 +140,7 @@ router.post('/init', async (req, res) => {
     await git.init()
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
