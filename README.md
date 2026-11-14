@@ -1,104 +1,80 @@
 # TrappistCode IDE
 
-IDE local uncensored + IA intégrée pour TrappistLand.
+IDE local + IA locale pour TrappistLand.
 
 ## Stack
 
 - React 19 + TypeScript + Vite
 - CodeMirror 6
-- Express + simple-git
+- Express + simple-git (backend IDE)
+- Ollama via ton propre serveur Python `server.py`
 - Theme TrappistAI (noir / vert `#00ff41`)
 
 ## Démarrage rapide
 
+### 1. Lancer ton agent local (depuis le repo TrappistCode)
+
+```bash
+cd /chemin/vers/TrappistCode
+python server.py
+```
+
+Le serveur agents doit tourner sur `http://localhost:8000/ask`.
+
+### 2. Lancer le backend IDE (ce repo)
+
+```bash
+cd server && npm install && npm run dev
+```
+
+Port `4269`.
+
+### 3. Lancer le frontend
+
 ```bash
 npm install
-npm run server:dev   # terminal 1 : backend Node
-npm run dev          # terminal 2 : frontend Vite
+npm run dev
 ```
 
-Ou tout en un :
+Port `5173`.
+
+### Lancer tout ensemble
 
 ```bash
-npm run start        # concurrently backend + frontend
+npm install
+cd server && npm install && cd ..
+npm run start
 ```
 
-### Variables d'environnement
-
-```bash
-cp .env.example .env
-# édite .env avec tes clés
-```
-
-## Backend
+## Backend IDE
 
 Port `4269` :
 
-- `/api/files/*` : CRUD sur le workspace local
-- `/api/git/*` : status, diff, add, commit, push, pull, branches
+- `/api/files/*` : CRUD workspace local
+- `/api/git/*` : status, diff, add, commit, push, pull
 - `/api/preview/*` : aperçu live HTML/CSS/JS
-- `/api/shell/*` : exécution shell sécurisée
-- `/api/templates/*` : création projets Vanilla / React / Node
+- `/api/shell/*` : terminal sandboxé
+- `/api/templates/*` : templates Vanilla / React / Node
 - `/api/search/*` : recherche web + GitHub
+
+## Agent IA
+
+L'agent de l'IDE appelle ton backend Ollama local sur `http://localhost:8000/ask`.
+
+Il supporte les actions :
+- `edit_buffer` : modifier le fichier ouvert
+- `edit_file` : modifier un fichier du workspace
+- `create_file` : créer un fichier
+- `read_file` : lire un fichier
+- `search` : recherche web/GitHub
+- `done` / `TERMINÉ` : arrêter la mission
 
 ## Fonctionnalités
 
-1. **Workspace local** : picker natif (Chrome/Edge) ou chemin absolu
-2. **Nouveau projet** : templates Vanilla, React, Node
-3. **Explorateur de fichiers** : tree, création fichier/dossier
-4. **Éditeur multi-tabs** : CodeMirror, sauvegarde Ctrl+S
-5. **Panel Agent multi-agents** :
-   - Worker : Gemma, DeepSeek, Kimi WaveSpeed, Trappist Local
-   - Reviewer Kimi 2.7 : tous les 10 tours
-   - Fallback Gemma : tous les 5 tours
-   - Recherche web/GitHub intégrée
-   - Mode autonome avec intervalle réglable
-   - Bouton Stop immédiat
-6. **Panel Git** : status, diff, stage, commit, push, pull
-7. **Preview flottante** : drag & drop + resize, temps réel
-8. **Terminal** : commandes npm/node/git/python…
-
-## Modèles supportés
-
-| Nom | Provider | Utilisation |
-|---|---|---|
-| Gemma | WaveSpeed | Worker / Reviewer |
-| DeepSeek | WaveSpeed | Worker |
-| Kimi WaveSpeed | WaveSpeed | Worker / Reviewer |
-| Kimi API | Moonshot AI | Reviewer premium |
-| Local | `localhost:8000` | Worker offline |
-
-## Actions Agent
-
-### Locales
-- `edit_file`, `create_file`, `read_file`, `search`
-
-### Buffer
-- `edit_buffer`, `set_buffer`
-
-### GitHub
-- `list_files`, `read_file`, `create_file`, `patch_file`
-
-### Contrôle
-- `done` : arrêter la mission
-
-## Architecture
-
-```
-src/
-  components/    UI IDE
-  hooks/         useWorkspace, useGitHubRepos
-  services/      localApi, agentModels, agentSearch, github, localSnapshot
-  types/         types partagés
-  App.tsx        layout IDE + preview flottante
-
-server/
-  index.js       serveur Express
-  routes/
-    files.js     fs local
-    git.js       simple-git
-    preview.js   serveur statique
-    shell.js     exécution shell sandboxée
-    templates.js templates de projets
-    search.js    recherche web + GitHub
-```
+1. Workspace local via picker natif ou chemin absolu
+2. Templates de projets Vanilla / React / Node
+3. Explorateur de fichiers + éditeur multi-tabs
+4. Panel Git : status, diff, stage, commit, push, pull
+5. Terminal shell sécurisé
+6. Preview flottante draggable & resizable
+7. Agent IA local + mode autonome
