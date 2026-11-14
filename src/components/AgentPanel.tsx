@@ -15,34 +15,41 @@ interface AgentPanelProps {
   kimiEnabled: boolean
 }
 
-interface AgentRunResult {
-  resume: string
-  status: string
-  tours: Array<{ tour?: number; action?: string; pensee?: string }>
+interface Tour {
+  tour?: number
+  action?: string
+  pensee?: string
 }
 
-function extractAction(text: string): { action: string; path?: string; content?: string; oldText?: string; newText?: string; query?: string } | null {
-  const match = text.match(/```(?:edit_file|edit_buffer|set_buffer|create_file|search)\s*([\s\S]*?)```/)
-  if (!match) return null
-  try {
-    return JSON.parse(match[1].trim())
-  } catch {
-    return null
-  }
+interface AgentStatus {
+  running: boolean
+  tours: Tour[]
 }
+
+const STATUS_URL = 'http://localhost:8000/agent/status'
+const RUN_URL = 'http://localhost:8000/agent/run'
+const ASK_URL = 'http://localhost:8000/ask'
 
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
   const { messages, push, clear, updateLast } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
-  const [tour, setTour] = useState(0)
+  const [tourCount, setTourCount] = useState(0)
   const cancelRef = useRef(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const stopPoll = () => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }
 
   const runLocalAction = async (action: any): Promise<string> => {
     if (!action?.action) return '〔pas d\'action〕'
@@ -75,6 +82,26 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
+  const startPoll = () => {
+    stopPoll()
+    pollRef.current = setInterval(async () => {
+      try {
+        const { data } = await axios.get<AgentStatus>(STATUS_URL, { timeout: 5000 })
+        setTourCount(data.tours?.length || 0)
+        setRunning(data.running)
+        if (data.tours && data.tours.length > 0) {
+          const last = data.tours[data.tours.length - 1]
+          const line = last.pensee || last.action || `tour ${last.tour}`
+          updateLast('system', { text: `Tour ${data.tours.length}: ${line}`, meta: { status: data.running ? 'running' : 'done' } })
+        }
+        if (!data.running) {
+          stopPoll()
+          setLoading(false)
+        }
+      } catch { /* ignore */ }
+    }, 1000)
+  }
+
   const runAgent = async () => {
     const mission = input.trim()
     if (!mission || running) return
@@ -83,29 +110,29 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     setRunning(true)
     setInput('')
     push({ role: 'user', text: mission })
-    const agentMsg = push({ role: 'system', text: 'Agent local démarré…' })
+    push({ role: 'system', text: 'Agent local démarré…' })
+    startPoll()
 
     try {
       const ctx = openPath ? `Fichier ouvert: ${openPath}\n\n${fileContent.slice(0, 2000)}` : ''
       const fullMission = ctx ? `${mission}\n\nCONTEXTE:\n${ctx}` : mission
-      const res = await axios.post<AgentRunResult>(
-        'http://localhost:8000/agent/run',
+      const { data } = await axios.post<{ resume: string; status: string; tours: Tour[] }>(
+        RUN_URL,
         { objectif: fullMission, max_tours: 20 },
         { timeout: 600_000 }
       )
-      const data = res.data
-      setTour(data.tours?.length || 0)
+      setTourCount(data.tours?.length || 0)
 
       let summary = data.resume || 'Mission terminée.'
       if (data.tours && data.tours.length > 0) {
-        const lastTour = data.tours[data.tours.length - 1]
-        summary = `Tour ${lastTour.tour || data.tours.length} — ${lastTour.action || 'terminé'}\n${lastTour.pensee || ''}`
+        const last = data.tours[data.tours.length - 1]
+        summary = `Tour ${last.tour || data.tours.length} — ${last.action || 'terminé'}\n${last.pensee || ''}`
       }
 
       updateLast('system', { text: summary, meta: { status: data.status } })
       push({ role: 'agent', text: summary })
 
-      if (kimiEnabled) {
+      if (kimiEnabled && needsKimi(summary)) {
         const kimiReview = await askKimiReview(mission, summary)
         if (kimiReview && !kimiReview.toLowerCase().startsWith('ok')) {
           push({ role: 'kimi', text: kimiReview })
@@ -116,9 +143,30 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
       push({ role: 'error', text: `Erreur agent: ${err}` })
       updateLast('system', { text: `Erreur: ${err}`, meta: { status: 'error' } })
     } finally {
+      stopPoll()
       setLoading(false)
       setRunning(false)
       cancelRef.current = false
+    }
+  }
+
+  const quickAsk = async () => {
+    const mission = input.trim()
+    if (!mission) return
+    setInput('')
+    push({ role: 'user', text: mission })
+    push({ role: 'system', text: 'Question rapide…' })
+    try {
+      const { data } = await axios.post<{ final: string }>(ASK_URL, {
+        question: mission,
+        file_content: fileContent || '',
+        file_path: openPath || '',
+      }, { timeout: 120_000 })
+      const answer = data.final || data.response || 'Pas de réponse'
+      updateLast('system', { text: 'Réponse reçue', meta: { status: 'ok' } })
+      push({ role: 'agent', text: answer })
+    } catch (e: any) {
+      push({ role: 'error', text: `Erreur: ${e.message}` })
     }
   }
 
@@ -126,6 +174,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     cancelRef.current = true
     setRunning(false)
     setLoading(false)
+    stopPoll()
     push({ role: 'system', text: 'Arrêt demandé par l\'utilisateur.' })
   }
 
@@ -142,7 +191,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>Trappist Agent</span>
           <span style={{ ...styles.badge, backgroundColor: running ? 'var(--tc-primary)' : 'var(--tc-bg-elevated)', color: running ? 'var(--tc-bg)' : 'var(--tc-text-muted)' }}>
-            {running ? `running t${tour}` : 'idle'}
+            {running ? `running t${tourCount}` : 'idle'}
           </span>
           {kimiEnabled && <span style={{ ...styles.badge, backgroundColor: '#0a3a2a', color: 'var(--tc-primary)' }}>Kimi</span>}
         </div>
@@ -181,8 +230,11 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           disabled={loading}
           style={styles.input}
         />
-        <button onClick={() => void runAgent()} disabled={loading || !input.trim()} style={styles.sendBtn}>
+        <button onClick={() => void runAgent()} disabled={loading || !input.trim()} style={styles.sendBtn} title="Lancer l'agent">
           {running ? '⏳' : '➤'}
+        </button>
+        <button onClick={() => void quickAsk()} disabled={loading || !input.trim()} style={{ ...styles.sendBtn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }} title="Question rapide">
+          ?
         </button>
         {running && <button onClick={stop} style={styles.stopBtn}>■</button>}
       </div>
@@ -278,7 +330,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 16px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: "'Courier New', Consolas, monospace',
   },
   stopBtn: {
     backgroundColor: 'var(--tc-danger)',
