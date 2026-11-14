@@ -4,7 +4,7 @@ import path from 'node:path'
 
 const router = Router()
 
-const TEMPLATES: Record<string, Record<string, string>> = {
+const TEMPLATES = {
   vanilla: {
     'index.html': `<!DOCTYPE html>
 <html lang="en">
@@ -75,7 +75,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
 }
 
 function resolveBase(req) {
-  return req.query.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
+  return req.body?.base || req.query?.base || process.env.TRAPPIST_WORKSPACE || process.cwd()
 }
 
 router.get('/list', (_req, res) => {
@@ -99,7 +99,7 @@ router.post('/create', async (req, res) => {
       await fs.writeFile(full, content, 'utf-8')
     }
     res.json({ ok: true, path: projectPath })
-  } catch (e: any) {
+  } catch (e) {
     res.status(500).json({ error: e.message })
   }
 })
