@@ -60,7 +60,7 @@ export function AgentPanel({
   const [intervalSeconds, setIntervalSeconds] = useState(0)
   const [logs, setLogs] = useState<AgentLog[]>([])
   const cancelRef = useRef(false)
-  const intervalRef = useRef<NodeJS.Timeout | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (intervalRef.current) clearInterval(intervalRef.current)
@@ -446,7 +446,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '0 16px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace',
+    fontFamily: "'Courier New', Consolas, monospace",
   },
   stopBtn: {
     backgroundColor: 'var(--tc-danger)',
@@ -455,7 +455,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
     padding: '0 14px',
     cursor: 'pointer',
-    fontFamily: "'Courier New', Consolas, monospace',
+    fontFamily: "'Courier New', Consolas, monospace",
   },
   logs: {
     maxHeight: '90px',
