@@ -10,7 +10,6 @@ import { useWorkspace } from './hooks/useWorkspace'
 import { useGitHubRepos } from './hooks/useGitHubRepos'
 import { localApi } from './services/localApi'
 import type { SidebarView, OpenFile } from './types/ide'
-import type { AgentModelKey } from './services/agentModels'
 
 type BottomTab = 'agent' | 'terminal'
 
@@ -27,7 +26,6 @@ function App() {
   const [previewFloating, setPreviewFloating] = useState<null | { x: number; y: number; w: number; h: number }>(null)
   const [previewKey, setPreviewKey] = useState(0)
 
-  const [selectedAgent, setSelectedAgent] = useState<AgentModelKey>('gemma')
   const [githubToken, setGithubToken] = useState('')
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
@@ -151,18 +149,10 @@ function App() {
     <GitPanel activePath={activePath} refreshKey={refreshKey} />
   ) : sidebarView === 'settings' ? (
     <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Agent Worker</label>
-      <select
-        value={selectedAgent}
-        onChange={(e) => setSelectedAgent(e.target.value as AgentModelKey)}
-        style={styles.input}
-      >
-        <option value="gemma">Gemma</option>
-        <option value="deepseek">DeepSeek</option>
-        <option value="kimi-wavespeed">Kimi WaveSpeed</option>
-        <option value="kimi">Kimi API</option>
-        <option value="trappist-local">Trappist Local</option>
-      </select>
+      <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Agent local Ollama</div>
+      <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)' }}>
+        Connecté à http://localhost:8000/ask (DeepSeek cerveau + Qwen relecteur)
+      </div>
 
       <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>GitHub Token</label>
       <input
@@ -185,11 +175,6 @@ function App() {
           <option key={r.id} value={r.full_name}>{r.private ? '🔒' : '🌐'} {r.full_name}</option>
         ))}
       </select>
-
-      <div style={{ fontSize: '11px', color: 'var(--tc-text-dim)', marginTop: 8 }}>
-        Kimi 2.7 : {import.meta.env.VITE_KIMI_KEY ? 'clé présente' : 'clé manquante'}<br/>
-        WaveSpeed : {import.meta.env.VITE_WAVESPEED_KEY ? 'clé présente' : 'clé manquante'}
-      </div>
     </div>
   ) : null
 
@@ -268,7 +253,6 @@ function App() {
               </div>
               {bottomTab === 'agent' ? (
                 <AgentPanel
-                  selectedAgent={selectedAgent}
                   githubToken={githubToken}
                   isTokenValid={isTokenValid}
                   selectedRepo={selectedRepo}
@@ -297,7 +281,6 @@ function App() {
 
       <div style={styles.statusBar}>
         <span>{activePath ? activePath : 'Aucun workspace'}</span>
-        <span style={{ marginLeft: 'auto' }}>{selectedAgent}</span>
         {selectedRepo && <span>{selectedRepo}</span>}
         {activeFilePath && <span>{activeFilePath}</span>}
       </div>
@@ -432,7 +415,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px',
     cursor: 'pointer',
     fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace',
+    fontFamily: "'Courier New', Consolas, monospace",
   },
   statusBar: {
     height: '28px',
