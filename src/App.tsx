@@ -34,9 +34,9 @@ function App() {
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
-        backgroundColor: '#1e1e1e',
-        color: '#cccccc',
-        fontFamily: 'Consolas, monospace',
+        backgroundColor: 'var(--tc-bg)',
+        color: 'var(--tc-text)',
+        fontFamily: "'Courier New', Consolas, monospace",
         overflow: 'hidden',
       }}
     >
@@ -44,15 +44,18 @@ function App() {
       <div
         style={{
           height: '36px',
-          backgroundColor: '#323233',
+          backgroundColor: 'var(--tc-bg-soft)',
           display: 'flex',
           alignItems: 'center',
           padding: '0 12px',
           fontSize: '13px',
           flexShrink: 0,
+          borderBottom: '1px solid var(--tc-border)',
         }}
       >
-        TrappistAI
+        <span style={{ color: 'var(--tc-primary)', textShadow: '0 0 10px rgba(0,255,65,0.5)' }}>
+          TrappistAI
+        </span>
         <div
           style={{
             marginLeft: 'auto',
@@ -67,11 +70,12 @@ function App() {
             value={selectedAgent}
             onChange={(e) => setSelectedAgent(e.target.value as any)}
             style={{
-              backgroundColor: '#3c3c3c',
-              color: '#cccccc',
-              border: '1px solid #3e3e42',
+              backgroundColor: 'var(--tc-bg-elevated)',
+              color: 'var(--tc-text)',
+              border: '1px solid var(--tc-border)',
               padding: '4px 8px',
               borderRadius: '4px',
+              fontFamily: "'Courier New', Consolas, monospace",
             }}
           >
             <option value="groq">Groq</option>
@@ -96,8 +100,8 @@ function App() {
         <div
           style={{
             width: '280px',
-            backgroundColor: '#252526',
-            borderRight: '1px solid #3e3e42',
+            backgroundColor: 'var(--tc-panel)',
+            borderRight: '1px solid var(--tc-border)',
             flexShrink: 0,
             minHeight: 0,
             overflow: 'auto',
@@ -121,7 +125,7 @@ function App() {
             flex: 1,
             minWidth: 0,
             minHeight: 0,
-            borderRight: '1px solid #3e3e42',
+            borderRight: '1px solid var(--tc-border)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
@@ -147,6 +151,7 @@ function App() {
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
+            backgroundColor: 'var(--tc-bg)',
           }}
         >
           <Editor
@@ -165,21 +170,22 @@ function App() {
       <div
         style={{
           height: '28px',
-          backgroundColor: '#007acc',
-          color: 'white',
+          backgroundColor: 'var(--tc-bg-elevated)',
+          color: 'var(--tc-primary)',
           fontSize: '12px',
           display: 'flex',
           alignItems: 'center',
           padding: '0 16px',
           gap: '16px',
           flexShrink: 0,
+          borderTop: '1px solid var(--tc-border)',
         }}
       >
         <span>{selectedAgent}</span>
         <span>{isTokenValid ? 'GitHub OK' : 'GitHub off'}</span>
         {selectedRepo && <span>{selectedRepo}</span>}
         {openPath && (
-          <span style={{ marginLeft: 'auto' }}>
+          <span style={{ marginLeft: 'auto', color: 'var(--tc-text)' }}>
             {openPath}
             {dirty ? ' •' : ''}
           </span>
