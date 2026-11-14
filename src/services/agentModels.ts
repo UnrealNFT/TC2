@@ -1,29 +1,30 @@
 import axios from 'axios'
 
-export interface ModelMessage {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
-
 export interface KimiResponse {
   text: string
 }
 
-export async function callKimi(messages: ModelMessage[], timeout = 300_000): Promise<KimiResponse> {
+export async function callWaveSpeed(question: string): Promise<KimiResponse> {
   const res = await axios.post(
-    'https://api.moonshot.cn/v1/chat/completions',
+    'https://llm.wavespeed.ai/v1/chat/completions',
     {
-      model: 'kimi-k2-0711-preview',
-      messages,
-      max_tokens: 4096,
+      model: 'moonshotai/kimi-k2.7-code',
+      messages: [
+        {
+          role: 'system',
+          content: 'Tu es un architecte senior. Réponds en français avec un plan court et des étapes concrètes. Pas de code complet.',
+        },
+        { role: 'user', content: question.slice(0, 4000) },
+      ],
+      max_tokens: 800,
       temperature: 0.4,
     },
     {
       headers: {
-        Authorization: `Bearer ${import.meta.env.VITE_KIMI_KEY}`,
+        Authorization: `Bearer ${import.meta.env.WAVESPEED_API_KEY}`,
         'Content-Type': 'application/json',
       },
-      timeout,
+      timeout: 60_000,
     }
   )
   const text = String(res.data.choices?.[0]?.message?.content || '').trim()
@@ -33,7 +34,7 @@ export async function callKimi(messages: ModelMessage[], timeout = 300_000): Pro
 export function needsKimi(text: string) {
   const lower = text.toLowerCase()
   const doubt = [
-    'doute', 'incertain', 'bloqué', 'erreur', 'impossible', 'impossible', 'incorrect',
+    'doute', 'incertain', 'bloqué', 'erreur', 'impossible', 'incorrect',
     'cassé', 'bug', 'ne fonctionne pas', 'ne marche pas', 'peux pas', 'fail',
     'je ne sais pas', 'manque', 'besoin de', 'correction', 'corrige',
   ]
