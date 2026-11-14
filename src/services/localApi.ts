@@ -63,6 +63,11 @@ export const localApi = {
     return axios.post(`${API}/api/files/delete`, { path, base })
   },
 
+  searchWorkspace(query: string): Promise<string[]> {
+    return axios.post(`${API}/api/search/workspace`, { query, base })
+      .then((r) => r.data.results as string[])
+  },
+
   gitStatus(): Promise<GitStatus> {
     return axios.get(`${API}/api/git/status${params({ base })}`).then((r) => r.data)
   },
