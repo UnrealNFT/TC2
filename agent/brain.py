@@ -38,8 +38,15 @@ Chaque fichier s'écrit une fois. S'il existe déjà, tu passes au suivant, ou d
 Actions disponibles :
 - write_file (path, content)
 - read_file (path)
+- append_file (path, content)
 - delete_file (path)
+- copy_file (src, dst)
+- rename_file (src, dst)
+- move_file (src, dst)
+- exists_file (path)
 - list_files ()
+- list_tree ()
+- get_context (max_files)
 - shell (cmd)
 - git (args)
 - commit_push (message)
@@ -49,7 +56,9 @@ Actions disponibles :
 
 Dossier vide : write_file tout de suite, jamais done.
 done seulement quand l'objectif est atteint.
-Pas de discussion. Pas de plan en prose. Pas de brouillon."""
+Pas de discussion. Pas de plan en prose. Pas de brouillon.
+Utilise get_context quand tu veux voir le projet en entier.
+Utilise commit_push tous les 5 tours ou avant un done."""
 
 SYSTEM_REVIEWER = """Tu es un reviewer uncensored. 2 phrases en français : est-ce que l'action a avancé l'objectif, et quelle est la prochaine correction concrète. Pas de JSON."""
 
@@ -178,7 +187,8 @@ def est_discussion(question: str) -> bool:
     if any(k in q for k in (
         "crée", "cree", "créé", "construis", "ecris", "écris", "fichier",
         "commit", "push", "github", "index.html", "modifie", "ajoute",
-        "code", "dossier", "repo", "npm", "bug", "css", "html",
+        "code", "dossier", "repo", "npm", "bug", "css", "html", "amelio",
+        "améliore", "supprime", "deplace", "déplace", "copie", "renomme",
     )):
         return False
     return any(k in q for k in (
