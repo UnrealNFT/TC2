@@ -7,16 +7,8 @@ const router = Router()
 function decodeBase(raw) {
   if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
   let s = typeof raw === 'string' ? raw : String(raw)
-  try {
-    s = decodeURIComponent(s)
-  } catch { /* ignore */ }
-  // certains clients envoient C:%5C -> C:\, d'autres C:/ -> C:\ sur Windows
-  if (process.platform === 'win32') {
-    s = s.replace(/\//g, '\\')
-    if (/^[a-zA-Z]:/.test(s) && s[1] === ':') {
-      // ok
-    }
-  }
+  try { s = decodeURIComponent(s) } catch { /* ignore */ }
+  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
   return path.resolve(s)
 }
 
@@ -25,9 +17,17 @@ function resolveBase(req) {
   return decodeBase(raw)
 }
 
+function isInside(base, target) {
+  const resolved = path.resolve(base, target || '')
+  if (process.platform === 'win32') {
+    return resolved.toLowerCase().startsWith(base.toLowerCase() + '\\') || resolved.toLowerCase() === base.toLowerCase()
+  }
+  return resolved.startsWith(base)
+}
+
 function safeJoin(base, target) {
   const resolved = path.resolve(base, target || '')
-  if (!resolved.startsWith(base)) {
+  if (!isInside(base, target)) {
     throw new Error('Path traversal detected')
   }
   return resolved
@@ -41,7 +41,7 @@ router.get('/list', async (req, res) => {
     const items = entries
       .map((e) => ({
         name: e.name,
-        path: path.join(req.query.path || '', e.name),
+        path: path.posix.join(req.query.path || '', e.name),
         type: e.isDirectory() ? 'dir' : 'file',
       }))
       .sort((a, b) => {
@@ -50,7 +50,7 @@ router.get('/list', async (req, res) => {
       })
     res.json(items)
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -61,7 +61,7 @@ router.get('/read', async (req, res) => {
     const content = await fs.readFile(filePath, 'utf-8')
     res.json({ path: req.query.path, content })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -73,7 +73,7 @@ router.post('/write', async (req, res) => {
     await fs.writeFile(filePath, req.body.content, 'utf-8')
     res.json({ ok: true, path: req.body.path })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -84,7 +84,7 @@ router.post('/mkdir', async (req, res) => {
     await fs.mkdir(dirPath, { recursive: true })
     res.json({ ok: true, path: req.body.path })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -96,7 +96,7 @@ router.post('/rename', async (req, res) => {
     await fs.rename(oldPath, newPath)
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -106,13 +106,13 @@ router.post('/delete', async (req, res) => {
     const target = safeJoin(base, req.body.path)
     const stat = await fs.stat(target)
     if (stat.isDirectory()) {
-      await fs.rmdir(target, { recursive: true })
+      await fs.rm(target, { recursive: true })
     } else {
       await fs.unlink(target)
     }
     res.json({ ok: true })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
@@ -128,7 +128,7 @@ router.get('/stat', async (req, res) => {
       mtime: stat.mtime,
     })
   } catch (e) {
-    res.status(500).json({ error: e.message })
+    res.status(500).json({ error: (e as Error).message })
   }
 })
 
