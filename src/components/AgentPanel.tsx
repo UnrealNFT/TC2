@@ -1,0 +1,292 @@
+import { useState, useRef, useEffect } from 'react'
+import axios from 'axios'
+import { useChatHistory } from '../hooks/useChatHistory'
+import { callWaveSpeed, needsKimi } from '../services/agentModels'
+import type React from 'react'
+
+interface AgentPanelProps {
+  githubToken: string
+  isTokenValid: boolean
+  selectedRepo: string | null
+  openPath: string | null
+  fileContent: string
+  onApplyEdit: (content: string) => void
+  workspace: string
+  kimiEnabled: boolean
+}
+
+interface AgentRunResult {
+  resume: string
+  status: string
+  tours: Array<{ tour?: number; action?: string; pensee?: string }>
+}
+
+function extractAction(text: string): { action: string; path?: string; content?: string; oldText?: string; newText?: string; query?: string } | null {
+  const match = text.match(/```(?:edit_file|edit_buffer|set_buffer|create_file|search)\s*([\s\S]*?)```/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch {
+    return null
+  }
+}
+
+export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
+  const { messages, push, clear, updateLast } = useChatHistory(workspace || '__global__')
+  const [input, setInput] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [tour, setTour] = useState(0)
+  const cancelRef = useRef(false)
+  const endRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const runLocalAction = async (action: any): Promise<string> => {
+    if (!action?.action) return '〔pas d\'action〕'
+    switch (action.action) {
+      case 'edit_buffer': {
+        if (!openPath) return '❌ Aucun fichier ouvert pour éditer le buffer'
+        if (!(fileContent || '').includes(action.oldText)) return '❌ oldText introuvable dans le buffer'
+        onApplyEdit(fileContent.replace(action.oldText, action.newText))
+        return '✅ Buffer modifié'
+      }
+      case 'set_buffer': {
+        if (!openPath) return '❌ Aucun fichier ouvert'
+        onApplyEdit(action.content || '')
+        return '✅ Buffer remplacé'
+      }
+      default:
+        return `〔action ${action.action} non prise en charge côté client〕`
+    }
+  }
+
+  const askKimiReview = async (mission: string, lastTourText: string): Promise<string> => {
+    if (!kimiEnabled) return ''
+    try {
+      const { text } = await callWaveSpeed(
+        `Mission: ${mission}\n\nDernier retour agent local:\n${lastTourText.slice(0, 2000)}\n\nDonne un diagnostic court (1-3 phrases) et un re-prompt très concret si bloqué, sinon dis "OK".`
+      )
+      return text
+    } catch (e: any) {
+      return `❌ Kimi: ${e.message || 'erreur'}`
+    }
+  }
+
+  const runAgent = async () => {
+    const mission = input.trim()
+    if (!mission || running) return
+    cancelRef.current = false
+    setLoading(true)
+    setRunning(true)
+    setInput('')
+    push({ role: 'user', text: mission })
+    const agentMsg = push({ role: 'system', text: 'Agent local démarré…' })
+
+    try {
+      const ctx = openPath ? `Fichier ouvert: ${openPath}\n\n${fileContent.slice(0, 2000)}` : ''
+      const fullMission = ctx ? `${mission}\n\nCONTEXTE:\n${ctx}` : mission
+      const res = await axios.post<AgentRunResult>(
+        'http://localhost:8000/agent/run',
+        { objectif: fullMission, max_tours: 20 },
+        { timeout: 600_000 }
+      )
+      const data = res.data
+      setTour(data.tours?.length || 0)
+
+      let summary = data.resume || 'Mission terminée.'
+      if (data.tours && data.tours.length > 0) {
+        const lastTour = data.tours[data.tours.length - 1]
+        summary = `Tour ${lastTour.tour || data.tours.length} — ${lastTour.action || 'terminé'}\n${lastTour.pensee || ''}`
+      }
+
+      updateLast('system', { text: summary, meta: { status: data.status } })
+      push({ role: 'agent', text: summary })
+
+      if (kimiEnabled) {
+        const kimiReview = await askKimiReview(mission, summary)
+        if (kimiReview && !kimiReview.toLowerCase().startsWith('ok')) {
+          push({ role: 'kimi', text: kimiReview })
+        }
+      }
+    } catch (e: any) {
+      const err = e?.response?.data?.detail || e.message || 'Erreur inconnue'
+      push({ role: 'error', text: `Erreur agent: ${err}` })
+      updateLast('system', { text: `Erreur: ${err}`, meta: { status: 'error' } })
+    } finally {
+      setLoading(false)
+      setRunning(false)
+      cancelRef.current = false
+    }
+  }
+
+  const stop = () => {
+    cancelRef.current = true
+    setRunning(false)
+    setLoading(false)
+    push({ role: 'system', text: 'Arrêt demandé par l\'utilisateur.' })
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void runAgent()
+    }
+  }
+
+  return (
+    <div style={styles.container}>
+      <div style={styles.header}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>Trappist Agent</span>
+          <span style={{ ...styles.badge, backgroundColor: running ? 'var(--tc-primary)' : 'var(--tc-bg-elevated)', color: running ? 'var(--tc-bg)' : 'var(--tc-text-muted)' }}>
+            {running ? `running t${tour}` : 'idle'}
+          </span>
+          {kimiEnabled && <span style={{ ...styles.badge, backgroundColor: '#0a3a2a', color: 'var(--tc-primary)' }}>Kimi</span>}
+        </div>
+        <button onClick={clear} style={styles.clearBtn} title="Effacer l'historique">🗑</button>
+      </div>
+
+      <div style={styles.messages}>
+        {messages.length === 0 && (
+          <div style={styles.welcome}>
+            <strong>Trappist Agent</strong><br />
+            Décris ta mission : créer, modifier, refactoriser…<br />
+            Les messages sont sauvegardés par workspace.
+          </div>
+        )}
+        {messages.map((msg) => {
+          const color = msg.role === 'user' ? 'var(--tc-text)' : msg.role === 'error' ? 'var(--tc-danger)' : msg.role === 'kimi' ? '#7ee787' : 'var(--tc-text-muted)'
+          const bg = msg.role === 'user' ? 'var(--tc-selected)' : 'var(--tc-bg-elevated)'
+          const label = msg.role === 'user' ? 'You' : msg.role === 'agent' ? 'Agent' : msg.role === 'kimi' ? 'Kimi' : msg.role === 'error' ? 'Erreur' : '•'
+          return (
+            <div key={msg.id} style={{ ...styles.message, backgroundColor: bg, borderColor: msg.role === 'error' ? 'var(--tc-danger)' : 'var(--tc-border)' }}>
+              <div style={{ ...styles.label, color }}>{label}</div>
+              <div style={{ color: 'var(--tc-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</div>
+            </div>
+          )
+        })}
+        <div ref={endRef} />
+      </div>
+
+      <div style={styles.inputBar}>
+        <input
+          type="text"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Mission : crée une landing page pour Trappist…"
+          disabled={loading}
+          style={styles.input}
+        />
+        <button onClick={() => void runAgent()} disabled={loading || !input.trim()} style={styles.sendBtn}>
+          {running ? '⏳' : '➤'}
+        </button>
+        {running && <button onClick={stop} style={styles.stopBtn}>■</button>}
+      </div>
+    </div>
+  )
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+    overflow: 'hidden',
+    backgroundColor: 'var(--tc-bg-soft)',
+  },
+  header: {
+    height: '36px',
+    borderBottom: '1px solid var(--tc-border)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '0 12px',
+    fontSize: '12px',
+    flexShrink: 0,
+  },
+  badge: {
+    fontSize: '10px',
+    padding: '2px 6px',
+    borderRadius: '10px',
+    border: '1px solid var(--tc-border)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  clearBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--tc-text-muted)',
+    cursor: 'pointer',
+    fontSize: '12px',
+  },
+  messages: {
+    flex: 1,
+    overflow: 'auto',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  welcome: {
+    textAlign: 'center',
+    color: 'var(--tc-text-dim)',
+    marginTop: '40px',
+    fontSize: '12px',
+    lineHeight: 1.5,
+  },
+  message: {
+    padding: '8px 10px',
+    borderRadius: '6px',
+    border: '1px solid var(--tc-border)',
+    color: 'var(--tc-text)',
+    fontSize: '12px',
+  },
+  label: {
+    fontSize: '10px',
+    fontWeight: 600,
+    marginBottom: '4px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  inputBar: {
+    display: 'flex',
+    gap: '8px',
+    padding: '10px',
+    borderTop: '1px solid var(--tc-border)',
+    flexShrink: 0,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: 'var(--tc-bg-elevated)',
+    border: '1px solid var(--tc-border)',
+    borderRadius: '4px',
+    padding: '8px',
+    color: 'var(--tc-text)',
+    fontFamily: "'Courier New', Consolas, monospace",
+    outline: 'none',
+  },
+  sendBtn: {
+    backgroundColor: 'var(--tc-primary)',
+    color: 'var(--tc-bg)',
+    border: 'none',
+    borderRadius: '4px',
+    padding: '0 16px',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
+  stopBtn: {
+    backgroundColor: 'var(--tc-danger)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    padding: '0 14px',
+    cursor: 'pointer',
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
+}
