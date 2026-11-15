@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Callable
 
+from . import checks
+
 ROOT = os.getcwd()
 
 # Dossiers critiques protégés : source du programme + dossiers système Windows.
@@ -95,6 +97,23 @@ def _backup_path(full: str) -> str:
     return candidate
 
 
+def _extrait(content: str, pos: int, rayon: int = 4) -> str:
+    """Quelques lignes numérotées autour d'une position, pour que l'agent voie le vrai fichier."""
+    lignes = content.splitlines()
+    n = content.count("\n", 0, pos)
+    debut, fin = max(0, n - rayon), min(len(lignes), n + rayon + 1)
+    return "\n".join(f"{i + 1:4d}| {lignes[i]}" for i in range(debut, fin))
+
+
+def _rapport_erreurs(path: str, erreurs: list[str]) -> str:
+    return (
+        f"ERREUR: modification REFUSÉE, elle casserait {path} :\n"
+        + "\n".join(f"- {e}" for e in erreurs[:8])
+        + "\nLe fichier n'a PAS été modifié. Relis-le avec read_file puis corrige ton edit "
+        "(ne recrée pas un bloc qui existe déjà, ex: footer, header, body)."
+    )
+
+
 def exists_file(path: str) -> bool:
     return os.path.isfile(_path(path))
 
@@ -126,13 +145,21 @@ def write_file(path: str, content: str) -> str:
             )
         return f"ERREUR: {path} existe déjà. Utilise edit_file, un seul extrait."
 
+    # Vérification gratuite avant d'écrire un nouveau fichier
+    erreurs = checks.verifier(path, content)
+    if erreurs:
+        return _rapport_erreurs(path, erreurs).replace(
+            "Relis-le avec read_file puis corrige ton edit", "Corrige le contenu puis relance write_file"
+        )
+
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
-    return f"ÉCRIT: {path}"
+    return f"ÉCRIT: {path} (vérification OK)"
 
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
-    """Remplace old_string par new_string. L'extrait doit être unique."""
+    """Remplace old_string par new_string. L'extrait doit être unique.
+    Refuse les remplacements qui coupent une ligne ou qui cassent le fichier."""
     full = _path(path)
     if not os.path.isfile(full):
         return f"ERREUR: {path} n'existe pas, utilise write_file"
@@ -147,11 +174,31 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
 
     count = content.count(old_string)
     if count == 0:
-        return f"ERREUR: extrait introuvable dans {path}. Rien écrit."
+        return f"ERREUR: extrait introuvable dans {path}. Rien écrit. Relis le fichier avec read_file."
     if count != 1:
-        return f"ERREUR: extrait trouvé {count} fois dans {path}. Rien écrit."
+        return f"ERREUR: extrait trouvé {count} fois dans {path}. Rien écrit. Ajoute des lignes autour pour le rendre unique."
 
-    new_content = content.replace(old_string, new_string, 1)
+    # Garde-fou "ligne coupée" : si on insère plusieurs lignes, l'extrait remplacé
+    # doit commencer en début de ligne et finir en fin de ligne.
+    pos = content.find(old_string)
+    fin = pos + len(old_string)
+    if "\n" in new_string.strip("\n"):
+        debut_coupe = pos > 0 and content[pos - 1] != "\n" and content[:pos].split("\n")[-1].strip() != ""
+        fin_coupee = fin < len(content) and content[fin] != "\n" and content[fin:].split("\n")[0].strip() != ""
+        if debut_coupe or fin_coupee:
+            return (
+                f"ERREUR: old_string coupe une ligne en deux dans {path}. Rien écrit.\n"
+                "Pour un remplacement sur plusieurs lignes, old_string doit contenir des LIGNES ENTIÈRES.\n"
+                f"Lignes actuelles autour de l'extrait :\n{_extrait(content, pos)}"
+            )
+
+    new_content = content[:pos] + new_string + content[fin:]
+
+    # Vérification gratuite : on refuse uniquement les NOUVEAUX problèmes
+    erreurs = checks.nouvelles_erreurs(path, content, new_content)
+    if erreurs:
+        return _rapport_erreurs(path, erreurs)
+
     diff = "".join(
         difflib.unified_diff(
             content.splitlines(keepends=True),
@@ -167,12 +214,21 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         pass
     with open(full, "w", encoding="utf-8") as f:
         f.write(new_content)
-    return f"ÉDITÉ: {path}\n{diff[:2500]}"
+    return f"ÉDITÉ: {path} (vérification OK)\n{diff[:2500]}"
 
 
 def append_file(path: str, content: str) -> str:
     full = _path(path)
     os.makedirs(os.path.dirname(full) or ROOT, exist_ok=True)
+    avant = ""
+    if os.path.isfile(full):
+        try:
+            avant = open(full, "r", encoding="utf-8").read()
+        except Exception:
+            avant = ""
+    erreurs = checks.nouvelles_erreurs(path, avant, avant + content)
+    if erreurs:
+        return _rapport_erreurs(path, erreurs)
     with open(full, "a", encoding="utf-8") as f:
         f.write(content)
     return f"AJOUTÉ: {path}"
@@ -302,21 +358,17 @@ def test_project(cmd: str = "") -> str:
 
 
 def test_file(path: str) -> str:
-    """Teste un fichier individuel selon son extension."""
+    """Teste un fichier individuel avec les vérifications gratuites."""
     full = _path(path)
+    if not os.path.isfile(full):
+        return f"ERREUR: {path} n'existe pas"
     ext = Path(full).suffix.lower()
-    if ext == ".py":
-        return shell(f'python -m py_compile "{full}"')
-    if ext in (".js", ".jsx", ".ts", ".tsx"):
-        return shell(f'node --check "{full}"')
-    if ext == ".html":
-        contenu = read_file(path)
-        if not contenu.strip().startswith("<"):
-            return "ERREUR: le fichier HTML ne commence pas par une balise"
-        return "OK (structure HTML basique vérifiée)"
-    if ext == ".css":
-        return "OK (CSS non exécutable)"
-    return f"AUCUN TEST POUR {path}"
+    if ext not in (".html", ".htm", ".js", ".mjs", ".cjs", ".py", ".json", ".css"):
+        return f"AUCUN TEST POUR {path}"
+    erreurs = checks.verifier(path, read_file(path))
+    if erreurs:
+        return f"ERREUR: {path}\n" + "\n".join(f"- {e}" for e in erreurs[:10])
+    return f"OK: {path} vérifié"
 
 
 def git_status() -> str:
