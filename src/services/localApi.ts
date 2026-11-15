@@ -43,6 +43,11 @@ export const localApi = {
       .then((r) => r.data as Array<{ name: string; path: string; type: string }>)
   },
 
+  listAt(path: string) {
+    return axios.get(`${API}/api/files/list${params({ path: '', base: path })}`)
+      .then((r) => r.data as Array<{ name: string; path: string; type: string }>)
+  },
+
   readFile(path: string): Promise<FileData> {
     return axios.get(`${API}/api/files/read${params({ path, base })}`).then((r) => r.data)
   },
