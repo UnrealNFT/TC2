@@ -1,23 +1,19 @@
 """Boucle autonome : une tâche, puis stop. continu=True améliore sans s'arrêter.
 
-Après chaque write_file réussi, DeepSeek/Qwen lit le fichier.
-- ok : le chemin entre dans verrou. On refuse de le réécrire.
-- pas ok : une seule correction est autorisée, puis on verrouille quand même.
-
-Kimi (WaveSpeed) intervient à deux moments :
-1. Supervisor tous les 10 tours (max 30 appels) : il regarde la structure,
-   les fichiers récents, l'historique et guide Gemma.
-2. Secours immédiat si Gemma est bloquée : JSON illisible, done prématuré,
-   doute. Max 2 appels de secours consécutifs.
-
-Contexte du projet : on alterne list_files (léger) et get_context (arbre + contenus).
+Améliorations clés :
+- Le workspace est fixe durant toute la boucle.
+- Avant chaque done, on vérifie que index.html existe, n'est pas vide, et que ses imports
+  (CSS/JS relatifs) existent.
+- Une phase de relecture finale relit tous les fichiers écrits, corrige si besoin, puis
+  appelle Kimi pour un avis global.
+- DeepSeek contrôle chaque write_file comme avant.
 """
-import json, os, time
+import json, os, re, time
 from . import brain, tools
 
 KIMI_TOUR_INTERVAL = 10
 KIMI_MAX_APPELS = 30
-CONTEXT_INTERVAL = 3  # un contexte enrichi toutes les 3 itérations
+CONTEXT_INTERVAL = 3
 
 
 def _dirs():
@@ -34,25 +30,52 @@ def _log(entry: dict):
 
 def _chemin(action: dict) -> str:
     brut = str((action.get("args") or {}).get("path", ""))
-    return brut.replace("\\", "/").lstrip("./").lower()
+    return brut.replace("\\\\", "/").lstrip("./").lower()
 
 
 def _fichier_manquant(objectif: str, contexte: str, suite: str, verrou: set) -> str:
-    """Le nom du prochain fichier, ou une chaîne vide si on peut vraiment s'arrêter."""
+    """Nom du prochain fichier obligatoire, ou '' si on peut s'arrêter."""
     if suite and suite not in verrou and suite not in ("done", "terminé", "termine"):
-        mot = suite.replace("\\", "/").split()[0].strip(".,;:")
+        mot = suite.replace("\\\\", "/").split()[0].strip(".,;:")
         if "." in mot and mot not in verrou:
             return mot
     fichiers = (contexte or "").lower()
     obj = (objectif or "").lower()
-    for nom in ("index.html", "admin.html", "style.css", "script.js"):
+    for nom in ("index.html", "admin.html", "style.css", "script.js", "styles.css", "main.js", "game.js"):
         if nom in obj and nom not in fichiers and nom not in verrou:
             return nom
     return ""
 
 
+def _imports_manquants():
+    """Regarde index.html et retourne la liste des fichiers relatifs manquants."""
+    try:
+        html = tools.read_file("index.html")
+    except Exception:
+        return ["index.html"]
+    if not html or not html.strip():
+        return ["index.html (vide)"]
+    manquants = []
+    # link rel="stylesheet" href="..."
+    for m in re.finditer(r'<link[^>]*href=["\']([^"\']+)["\'][^>]*>', html, re.I):
+        href = m.group(1)
+        if href.startswith(("http", "//", "#")) or "{{" in href:
+            continue
+        href = href.split("?")[0]
+        if not tools.exists_file(href):
+            manquants.append(href)
+    # script src="..."
+    for m in re.finditer(r'<script[^>]*src=["\']([^"\']+)["\'][^>]*>', html, re.I):
+        src = m.group(1)
+        if src.startswith(("http", "//", "#")):
+            continue
+        src = src.split("?")[0]
+        if not tools.exists_file(src):
+            manquants.append(src)
+    return manquants
+
+
 def _kimi_secours(tour, objectif, historique, contexte, raison, callback, appels_kimi):
-    """Un appel WaveSpeed de secours. Renvoie (action, appels_kimi)."""
     appels_kimi += 1
     if callback:
         callback(tour, {"action": "kimi_secours", "args": {}}, raison)
@@ -61,7 +84,6 @@ def _kimi_secours(tour, objectif, historique, contexte, raison, callback, appels
 
 
 def _supervisor_kimi(tour, objectif, historique, contexte, callback, appels_superviseur):
-    """Appel supervisor Kimi tous les KIMI_TOUR_INTERVAL tours. Renvoie guidance."""
     appels_superviseur += 1
     if callback:
         callback(tour, {"action": "kimi_supervisor", "args": {}}, f"Tour {tour} : appel supervisor Kimi ({appels_superviseur}/{KIMI_MAX_APPELS})")
@@ -85,6 +107,75 @@ def executer(action: dict) -> str:
         return f"Erreur {nom}: {e}"
 
 
+def _relire_fichiers_crees():
+    """Retourne un dict {chemin: contenu} des fichiers html/css/js non vides."""
+    fichiers = {}
+    try:
+        for f in tools.list_files().split("\\n"):
+            f = f.strip()
+            if f.endswith((".html", ".css", ".js", ".ts")):
+                try:
+                    contenu = tools.read_file(f)
+                    if contenu.strip():
+                        fichiers[f] = contenu
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return fichiers
+
+
+def _phase_relecture_finale(objectif: str, historique: list, callback=None):
+    """Relit les fichiers créés, demande une correction si nécessaire, puis valide."""
+    fichiers = _relire_fichiers_crees()
+    if not fichiers:
+        return "Aucun fichier valide à relire."
+    resumes = []
+    for chemin, contenu in list(fichiers.items())[:8]:
+        resumes.append(f"--- {chemin} ---\\n{contenu[:1500]}")
+    bloc = "\\n\\n".join(resumes)
+    prompt = (
+        f"OBJECTIF : {objectif}\\n\\n"
+        f"FICHIERS CRÉÉS :\\n{bloc}\\n\\n"
+        "Si un fichier est incorrect, incomplet, vide, ou mal lié aux autres, "
+        "réponds UNIQUEMENT par un JSON d'action write_file pour le corriger. "
+        "Sinon réponds {\"action\":\"done\",\"args\":{\"resume\":\"fichiers validés\"}}."
+    )
+    try:
+        action = brain.decider_raw(prompt)
+    except Exception:
+        return "Relecture finale impossible."
+    if action.get("action") == "done":
+        msg = "Relecture finale : fichiers validés par Gemma."
+        if callback:
+            callback(0, {"action": "relecture_finale", "args": {}}, msg)
+        return msg
+    # Exécute la correction suggérée
+    resultat = executer(action)
+    msg = f"Relecture finale : correction sur {action.get('args', {}).get('path', '?')} -> {resultat[:120]}"
+    if callback:
+        callback(0, {"action": "relecture_finale", "args": {}}, msg)
+    return msg
+
+
+def _kimi_avis_global(objectif: str, callback=None) -> str:
+    """Kimi regarde l'ensemble final et donne son avis + suggestions."""
+    try:
+        fichiers = _relire_fichiers_crees()
+    except Exception:
+        fichiers = {}
+    if not fichiers:
+        return ""
+    resumes = []
+    for chemin, contenu in list(fichiers.items())[:6]:
+        resumes.append(f"--- {chemin} ---\\n{contenu[:1200]}")
+    bloc = "\\n\\n".join(resumes)
+    avis = brain.kimi_final_review(objectif, bloc)
+    if callback and avis:
+        callback(0, {"action": "kimi_final", "args": {}}, avis[:300])
+    return avis
+
+
 def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=None, continu: bool = False):
     historique = []
     tours_sans_commit = 0
@@ -97,7 +188,9 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
     appels_superviseur = 0
     suite = ""
     done_refuses = 0
-    guidance_kimi = ""  # injectée dans le prompt de Gemma au prochain tour
+    guidance_kimi = ""
+    phase_relecture = False
+    phase_kimi = False
 
     while True:
         _, stop_file = _dirs()
@@ -108,13 +201,11 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
         if max_tours > 0 and tour > max_tours:
             return f"Max tours atteint ({max_tours})."
 
-        # Contexte : léger la plupart du temps, enrichi toutes les CONTEXT_INTERVAL itérations
         if tour % CONTEXT_INTERVAL == 0:
             contexte = tools.get_context(max_files=10)
         else:
             contexte = tools.list_files()
 
-        # Supervisor Kimi tous les KIMI_TOUR_INTERVAL tours, jusqu'à KIMI_MAX_APPELS
         if tour % KIMI_TOUR_INTERVAL == 0 and appels_superviseur < KIMI_MAX_APPELS:
             guidance_kimi, appels_superviseur = _supervisor_kimi(
                 tour, objectif, historique, contexte, callback, appels_superviseur
@@ -122,14 +213,13 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
 
         try:
             action = brain.decider(objectif, historique, contexte, guidance=guidance_kimi)
-            guidance_kimi = ""  # consommée
+            guidance_kimi = ""
         except Exception as e:
             action = {"pensee": "Pas de JSON", "action": "?", "args": {}, "erreur": str(e)[:200]}
 
         nom = action.get("action", "?")
         pensee = action.get("pensee", "")
 
-        # Secours Kimi si Gemma n'a pas compris / est bloquée
         if (pensee == "Pas de JSON" or nom in ("?", "")) and appels_kimi < 2:
             action, appels_kimi = _kimi_secours(
                 tour, objectif, historique, contexte,
@@ -150,6 +240,7 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
 
         erreurs_json = 0
 
+        # VÉRIFICATIONS AVANT done
         if nom == "done":
             if any(k in objectif.lower() for k in ("lis", "lire", "que fait", "répond", "repond")) \
                     and not any(h[0] in ("list_files", "read_file", "get_context") for h in historique):
@@ -158,6 +249,7 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
                     callback(tour, action, "Pas encore lu. list_files, puis read_file.")
                 time.sleep(1)
                 continue
+
             manque = _fichier_manquant(objectif, contexte, suite, verrou)
             if manque and done_refuses < 3:
                 done_refuses += 1
@@ -174,24 +266,62 @@ def boucle(objectif: str, max_tours: int = 0, commit_chaque: int = 5, callback=N
                         callback(tour, action, f"Pas fini. Fichier suivant : {manque}")
                     time.sleep(1)
                     continue
-            elif manque:
-                return f"Arrêté : {manque} n'a pas été écrit."
-            else:
-                resume = action.get("args", {}).get("resume", "terminé")
-                _log({"tour": tour, "done": resume})
+
+            # Vérifie index.html et imports manquants
+            imports_manquants = _imports_manquants()
+            if imports_manquants and done_refuses < 5:
+                done_refuses += 1
+                manque_str = ", ".join(imports_manquants)
+                if appels_kimi < 2:
+                    action, appels_kimi = _kimi_secours(
+                        tour, objectif, historique, contexte,
+                        f"index.html incomplet. Manque : {manque_str}. Crée ces fichiers et/ou corrige le chemin.",
+                        callback, appels_kimi,
+                    )
+                    nom = action.get("action", "?")
+                if nom == "done" or nom in ("?", ""):
+                    historique.append(("done refusé", f"Imports manquants: {manque_str}"))
+                    if callback:
+                        callback(tour, action, f"index.html incomplet. Manque : {manque_str}")
+                    time.sleep(1)
+                    continue
+
+            # Phase de relecture finale automatique (une seule fois)
+            if not phase_relecture:
+                phase_relecture = True
+                msg = _phase_relecture_finale(objectif, historique, callback)
                 if callback:
-                    callback(tour, action, resume)
-                if not continu:
-                    return resume
-                objectif = (
-                    "Continue d'améliorer cette application pour la rendre plus rapide et plus solide. "
-                    f"Dernier état : {resume}. Ne réécris pas un fichier déjà validé. "
-                    "Change quelque chose de concret, puis vérifie."
-                )
-                historique.append(("done", resume[:200]))
-                suite = ""
-                time.sleep(2)
+                    callback(tour, {"action": "phase_relecture", "args": {}}, msg)
                 continue
+
+            # Avis Kimi final (une seule fois)
+            if not phase_kimi:
+                phase_kimi = True
+                avis = _kimi_avis_global(objectif, callback)
+                if avis and "done" not in avis.lower():
+                    guidance_kimi = avis
+                    if callback:
+                        callback(tour, {"action": "kimi_guidance", "args": {}}, "Kimi a des suggestions à appliquer.")
+                    continue
+
+            # VRAI done
+            resume = action.get("args", {}).get("resume", "terminé")
+            _log({"tour": tour, "done": resume})
+            if callback:
+                callback(tour, action, resume)
+            if not continu:
+                return resume
+            objectif = (
+                "Continue d'améliorer cette application pour la rendre plus rapide et plus solide. "
+                f"Dernier état : {resume}. Ne réécris pas un fichier déjà validé. "
+                "Change quelque chose de concret, puis vérifie."
+            )
+            historique.append(("done", resume[:200]))
+            suite = ""
+            phase_relecture = False
+            phase_kimi = False
+            time.sleep(2)
+            continue
 
         if nom == "write_file":
             chemin = _chemin(action)
