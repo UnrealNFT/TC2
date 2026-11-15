@@ -2,19 +2,11 @@ import { Router } from 'express'
 import { simpleGit } from 'simple-git'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { requireBase } from '../lib/workspace.js'
 
 const router = Router()
 
-function decodeBase(raw) {
-  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
-  let s = typeof raw === 'string' ? raw : String(raw)
-  try { s = decodeURIComponent(s) } catch { /* ignore */ }
-  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
-}
-
-function getGit(req) {
-  const base = decodeBase(req.query?.base ?? req.body?.base)
+function getGit(base) {
   return simpleGit(path.resolve(base))
 }
 
@@ -23,12 +15,13 @@ function isGitRepo(base) {
 }
 
 router.get('/status', async (req, res) => {
-  const base = decodeBase(req.query?.base ?? req.body?.base)
+  const base = requireBase(req, res)
+  if (!base) return
   try {
     if (!isGitRepo(base)) {
       return res.json({ isRepo: false, branch: null, isClean: true, modified: [] })
     }
-    const git = getGit(req)
+    const git = getGit(base)
     const status = await git.status()
     res.json({
       isRepo: true,
@@ -50,7 +43,9 @@ router.get('/status', async (req, res) => {
 
 router.get('/diff', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     const diff = req.query.path ? await git.diff([req.query.path]) : await git.diff()
     res.json({ diff })
   } catch (e) {
@@ -60,7 +55,9 @@ router.get('/diff', async (req, res) => {
 
 router.get('/diff-staged', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     const diff = await git.diff(['--cached'])
     res.json({ diff })
   } catch (e) {
@@ -70,7 +67,9 @@ router.get('/diff-staged', async (req, res) => {
 
 router.post('/add', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     await git.add(req.body.path || '.')
     res.json({ ok: true })
   } catch (e) {
@@ -80,7 +79,9 @@ router.post('/add', async (req, res) => {
 
 router.post('/unstage', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     await git.reset(['HEAD', req.body.path || '.'])
     res.json({ ok: true })
   } catch (e) {
@@ -90,7 +91,9 @@ router.post('/unstage', async (req, res) => {
 
 router.post('/commit', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     const result = await git.commit(req.body.message || 'TrappistCode update', {
       '--author': req.body.author || 'TrappistCode Agent <agent@trappist.land>',
     })
@@ -102,7 +105,9 @@ router.post('/commit', async (req, res) => {
 
 router.post('/push', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     await git.push(req.body.remote || 'origin', req.body.branch || 'HEAD')
     res.json({ ok: true })
   } catch (e) {
@@ -112,7 +117,9 @@ router.post('/push', async (req, res) => {
 
 router.post('/pull', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     await git.pull(req.body.remote || 'origin', req.body.branch || 'current')
     res.json({ ok: true })
   } catch (e) {
@@ -122,7 +129,9 @@ router.post('/pull', async (req, res) => {
 
 router.get('/branches', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     const summary = await git.branch()
     res.json({
       current: summary.current,
@@ -135,7 +144,9 @@ router.get('/branches', async (req, res) => {
 
 router.post('/checkout', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     const options = req.body.create ? ['-b', req.body.branch] : [req.body.branch]
     await git.checkout(options)
     res.json({ ok: true })
@@ -146,7 +157,9 @@ router.post('/checkout', async (req, res) => {
 
 router.post('/init', async (req, res) => {
   try {
-    const git = getGit(req)
+    const base = requireBase(req, res)
+    if (!base) return
+    const git = getGit(base)
     await git.init()
     res.json({ ok: true })
   } catch (e) {
