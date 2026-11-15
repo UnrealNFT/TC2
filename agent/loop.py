@@ -6,6 +6,7 @@ from typing import Callable
 
 from . import tools
 from . import brain
+from . import memory
 
 
 # Nombre de tours par cycle
@@ -68,6 +69,10 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
         return "💾 Commit/push effectué."
     if action == "shell":
         return "⚙️ Commande exécutée."
+    if action == "test_project":
+        return "🧪 Test projet exécuté."
+    if action == "test_file":
+        return "🧪 Test fichier exécuté."
     if action == "set_root":
         return "📂 Dossier de travail défini."
     if action == "kimi":
@@ -193,6 +198,33 @@ def _detecter_boucle(historique: list) -> str:
     return ""
 
 
+def _kimi_valide(mission: str, contexte: str) -> tuple[bool, str]:
+    """Demande à Kimi s'il valide le travail. Renvoie (valide, reponse_texte)."""
+    try:
+        reponse = brain.kimi_final_review(mission, contexte)
+        texte_bas = reponse.lower()
+        valide = "done" in texte_bas or "ok" in texte_bas or "valid" in texte_bas
+        return valide, reponse
+    except Exception as e:
+        return False, f"Erreur appel Kimi: {e}"
+
+
+def _snapshot_pour_kimi(mission: str, historique: list, derniere_erreur: str = "") -> str:
+    """Construit un résumé clair pour Kimi : objectif + fichiers + dernière erreur."""
+    lignes = [f"MISSION : {mission}", "", "FICHIERS :"]
+    fichiers = []
+    for nom in tools.list_tree().splitlines():
+        if nom.strip() and not nom.endswith("/"):
+            fichiers.append(nom.strip())
+    lignes.append(", ".join(fichiers[:30]) or "(vide)")
+    if derniere_erreur:
+        lignes.extend(["", f"DERNIÈRE ERREUR / BLOCAGE : {derniere_erreur}"])
+    lignes.append("")
+    lignes.append("Réponds 'ok' ou 'done' si le travail est correctement terminé. "
+                  "Sinon, donne 1 à 3 actions concrètes à corriger.")
+    return "\n".join(lignes)
+
+
 def _run_cycle(
     objectif: str,
     historique: list,
@@ -233,6 +265,14 @@ def _run_cycle(
         if guidance_kimi:
             prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
             guidance_kimi = ""  # consommé immédiatement
+
+        # Injection mémoire : derniers retours Kimi sur cette mission
+        feedbacks = memory.get_latest_kimi_feedback(objectif, limit=3)
+        if feedbacks:
+            prompt_sup += "\n\nDERNIERS CONSEILS KIMI MÉMORISÉS :\n"
+            for tour, fichier, erreur, conseil in feedbacks:
+                prompt_sup += f"- tour {tour} [{fichier}] erreur={erreur[:100]} ; conseil={conseil[:250]}\n"
+            prompt_sup += "Applique ces conseils si pertinent.\n"
 
         # Détection anti-boucle
         anti_boucle = _detecter_boucle(historique)
@@ -342,6 +382,9 @@ def boucle(
     # Reset stop flag au démarrage
     STOP_FLAG["stop"] = False
 
+    # Initialisation mémoire
+    memory.init()
+
     while tour_courant <= max_tours and not termine:
         if STOP_FLAG["stop"]:
             termine = True
@@ -397,23 +440,72 @@ def boucle(
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
-    # Avis final Kimi
+    # Validation finale Kimi : boucle jusqu'à ce qu'il dise ok/done ou max fix atteint
     fichiers = []
     for nom in tools.list_tree().splitlines():
         if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
             fichiers.append(nom)
 
-    guidance_kimi = ""
-    if fichiers:
+    resume_bloc = []
+    for f in fichiers[:8]:
+        cont = tools.read_file(f)
+        resume_bloc.append(f"=== {f} ===\n{cont[:2000]}")
+    bloc = "\n\n".join(resume_bloc)
+
+    # Appel initial Kimi
+    valide, reponse_kimi = _kimi_valide(objectif, bloc)
+    _callback_safety(callback, 0, {"action": "kimi", "args": {}}, f"🌙 Validation Kimi : {'OK' if valide else 'BLOQUAGES DÉTECTÉS'}")
+
+    iterations_kimi = 0
+    max_iterations_kimi = 3
+    while not valide and iterations_kimi < max_iterations_kimi:
+        iterations_kimi += 1
+        # Enregistrer le retour dans la mémoire
+        memory.save_kimi_feedback(objectif, dernier_tour, ", ".join(fichiers), "validation finale", reponse_kimi)
+
+        # Reprendre la boucle avec le conseil de Kimi
+        guidance_kimi = (
+            f"VALIDATION FINALE KIMI NON OK (itération {iterations_kimi}). "
+            f"Conseil de Kimi : {reponse_kimi[:1200]}. Corrige immédiatement et continue."
+        )
+        _callback_safety(callback, 0, {"action": "kimi", "args": {}}, f"🌙 Kimi itération {iterations_kimi}: {reponse_kimi[:200]}...")
+
+        # Relancer un mini-cycle de correction
+        corr_termine, dernier_tour, guidance_kimi, stopped = _run_cycle(
+            objectif,
+            historique,
+            verrou,
+            dernier_tour + 1,
+            cycle + 1,
+            callback,
+            max(dernier_tour + 5, max_tours),
+            continu,
+            guidance_kimi,
+            description_continu,
+            kimi_only=kimi_only,
+        )
+        cycle += 1
+
+        # Re-snapshot
+        fichiers = []
+        for nom in tools.list_tree().splitlines():
+            if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
+                fichiers.append(nom)
         resume_bloc = []
         for f in fichiers[:8]:
             cont = tools.read_file(f)
             resume_bloc.append(f"=== {f} ===\n{cont[:2000]}")
         bloc = "\n\n".join(resume_bloc)
-        guidance_kimi = brain.kimi_final_review(objectif, bloc) or ""
+        valide, reponse_kimi = _kimi_valide(objectif, bloc)
+
+    # Dernier message
+    if valide:
+        final_msg = f"Mission validée par Kimi. {reponse_kimi[:300]}"
+    else:
+        final_msg = f"Mission terminée après {max_iterations_kimi} itérations Kimi. Dernier avis : {reponse_kimi[:500]}"
 
     if callback:
-        _callback_safety(callback, 0, {"action": "done", "args": {}}, f"Résumé final : {guidance_kimi or 'Terminé.'}")
+        _callback_safety(callback, 0, {"action": "done", "args": {}}, f"Résumé final : {final_msg}")
 
 
 def _log(data: dict):

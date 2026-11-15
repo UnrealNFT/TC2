@@ -166,7 +166,9 @@ def get_context(max_files: int = 30) -> str:
     files = []
     for root, _, filenames in os.walk(ROOT):
         for f in filenames:
-            if f.lower().endswith((".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
+            if f.lower().endswith(
+                (".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")
+            ):
                 files.append(os.path.join(root, f))
     files.sort(key=lambda x: os.path.getsize(x))
     context = []
@@ -206,6 +208,40 @@ def shell(command: str = "", cmd: str = "", timeout: int = 60) -> str:
         return f"ERREUR: {e}"
 
 
+def test_project(cmd: str = "") -> str:
+    """Lance un test réel sur le projet ou un fichier.
+    Si cmd est fourni, l'exécute directement. Sinon déduit le test par défaut.
+    """
+    if cmd:
+        return shell(cmd)
+    if exists_file("package.json"):
+        # Vite / React
+        pkg = read_file("package.json")
+        if '"build"' in pkg:
+            return shell("npm run build")
+    if exists_file("requirements.txt"):
+        return shell("python -m py_compile *.py")
+    return "AUCUN TEST TROUVÉ"
+
+
+def test_file(path: str) -> str:
+    """Teste un fichier individuel selon son extension."""
+    full = _path(path)
+    ext = Path(full).suffix.lower()
+    if ext == ".py":
+        return shell(f"python -m py_compile \"{full}\"")
+    if ext in (".js", ".jsx", ".ts", ".tsx"):
+        return shell(f"node --check \"{full}\"")
+    if ext == ".html":
+        contenu = read_file(path)
+        if not contenu.strip().startswith("<"):
+            return "ERREUR: le fichier HTML ne commence pas par une balise"
+        return "OK (structure HTML basique vérifiée)"
+    if ext == ".css":
+        return "OK (CSS non exécutable)"
+    return f"AUCUN TEST POUR {path}"
+
+
 def git_status() -> str:
     return shell("git status --short")
 
@@ -241,6 +277,8 @@ TOOLS: dict[str, Callable] = {
     "list_tree": list_tree,
     "get_context": get_context,
     "shell": shell,
+    "test_project": test_project,
+    "test_file": test_file,
     "git_status": git_status,
     "git": _git,
     "commit_push": commit_push,
