@@ -24,7 +24,7 @@ SYSTEM_CODER = """Tu es un agent de code autonome (TrappistCode).
 A chaque tour tu DOIS répondre par UN SEUL objet JSON. Rien avant, rien après. Pas de ```.
 {
   "pensee": "ton raisonnement court",
-  "action": "write_file|read_file|append_file|delete_file|copy_file|rename_file|move_file|exists_file|list_files|list_tree|get_context|shell|commit_push|set_root|done",
+  "action": "edit_file|write_file|read_file|append_file|delete_file|copy_file|rename_file|move_file|exists_file|list_files|list_tree|get_context|shell|commit_push|set_root|done",
   "args": { ... }
 }
 
@@ -34,7 +34,8 @@ Actions (utilise EXACTEMENT ces noms) :
 - list_tree () : arborescence complète.
 - get_context (max_files=30) : extrait un résumé du projet.
 - read_file (path)
-- write_file (path, content)
+- write_file (path, content) : UNIQUEMENT pour créer un nouveau fichier ou le réécrire entièrement.
+- edit_file (path, old_string, new_string) : POUR TOUS LES CHANGEMENTS PARTIELS. C'est l'outil par défaut.
 - append_file (path, content)
 - delete_file (path)
 - copy_file (src, dst)
@@ -48,6 +49,7 @@ Actions (utilise EXACTEMENT ces noms) :
 Règles absolues :
 - Un seul outil par tour. Pas de texte hors JSON.
 - Si le dossier est vide et l'objectif demande de créer quelque chose, fais write_file immédiatement.
+- Si un fichier existe déjà et tu veux le modifier, utilise edit_file avec old_string exact. NE réécris pas le fichier entier sans raison.
 - Ne réponds done que si l'objectif est réellement atteint.
 - Commit régulièrement tous les 5 tours.
 - Utilise get_context quand tu veux voir le projet en entier.
@@ -304,18 +306,25 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
     # Détection anti-boucle
     actions_recentes = [a.get("action") for a, _ in historique[-6:]]
     anti_boucle = ""
-    if actions_recentes.count("list_files") >= 3 or actions_recentes.count("read_file") >= 3:
+    if actions_recentes.count("list_files") >= 2 or actions_recentes.count("read_file") >= 3:
         fichiers = []
         for nom in contexte.splitlines()[:25]:
             nom = nom.strip()
             if nom and not nom.endswith("/") and any(nom.lower().endswith(ext) for ext in (".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
                 fichiers.append(nom)
+        action_forcee = "read_file"
+        cible = fichiers[0] if fichiers else ""
+        if actions_recentes.count("list_files") >= 2:
+            action_forcee = "get_context" if not fichiers else "read_file"
         anti_boucle = (
             "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
-            "Tu dois AGIR maintenant : write_file, append_file, delete_file, rename_file, copy_file, shell ou commit_push. "
+            f"Tu dois AGIR maintenant avec edit_file ou write_file. "
             f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
+            f"Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string). "
             "Si l'objectif est atteint, appelle done."
         )
+        if cible:
+            anti_boucle += f"\nExemple : {{\"action\": \"read_file\", \"args\": {{\"path\": \"{cible}\"}}}} puis edit_file."
 
     prompt = (
         f"OBJECTIF : {objectif}\n\n"
@@ -328,7 +337,8 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
         "EXPORTE un seul JSON avec 'action', 'args', 'pensee'. "
         "Interdit de répondre avec du texte libre, du markdown ou plusieurs blocs. "
         "Si le dossier est vide, écris un premier fichier avec write_file. "
-        "Si les fichiers existent déjà, AMÉLIORE-LES (write_file/append_file) au lieu de lister. "
+        "Si un fichier existe déjà et tu veux le modifier, utilise OBLIGATOIREMENT edit_file(path, old_string, new_string). "
+        "N'utilise write_file que pour créer un fichier ou le réécrire entièrement. "
         "N'utilise list_tree/list_files qu'au tout premier tour. Ensuite c'est une perte de temps."
     )
     if "html" in msg or "css" in msg or "js" in msg or "jeu" in msg or "game" in msg or "site" in msg or "web" in msg or "frontend" in msg:
@@ -347,7 +357,7 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
     if vide and not historique and data.get("action") != "write_file":
         data = _coder(prompt + "\n\nInterdit de répondre done. Écris le premier fichier maintenant avec write_file.")
 
-    # Si on détecte une action répétitive inutile, forcer write_file ou done
+    # Si on détecte une action répétitive inutile, forcer edit_file ou read_file
     if data.get("action") in ("list_files", "list_tree") and actions_recentes.count("list_files") >= 2:
         fichiers = []
         for nom in contexte.splitlines()[:25]:
