@@ -26,6 +26,8 @@ interface AgentStatus {
   tours: Tour[]
 }
 
+type Mode = 'agent' | 'ask'
+
 const STATUS_URL = 'http://localhost:8000/agent/status'
 const RUN_URL = 'http://localhost:8000/agent/run'
 const ASK_URL = 'http://localhost:8000/ask'
@@ -33,6 +35,7 @@ const ASK_URL = 'http://localhost:8000/ask'
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
   const { messages, push, clear, updateLast } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
+  const [mode, setMode] = useState<Mode>('agent')
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [tourCount, setTourCount] = useState(0)
@@ -151,6 +154,14 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
+  const submit = () => {
+    if (mode === 'agent') {
+      void runAgent()
+    } else {
+      void quickAsk()
+    }
+  }
+
   const stop = () => {
     cancelRef.current = true
     setRunning(false)
@@ -162,7 +173,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      void runAgent()
+      submit()
     }
   }
 
@@ -183,7 +194,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
         {messages.length === 0 && (
           <div style={styles.welcome}>
             <strong>Trappist Agent</strong><br />
-            Décris ta mission : créer, modifier, refactoriser…<br />
+            Choisis Ask pour discuter, Agent pour agir sur les fichiers.<br />
             Les messages sont sauvegardés par workspace.
           </div>
         )}
@@ -202,20 +213,33 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
       </div>
 
       <div style={styles.inputBar}>
+        <div style={styles.modeToggle}>
+          <button
+            onClick={() => setMode('ask')}
+            style={{ ...styles.modeBtn, ...(mode === 'ask' ? styles.modeActive : {}) }}
+            title="Pose une question"
+          >
+            Ask
+          </button>
+          <button
+            onClick={() => setMode('agent')}
+            style={{ ...styles.modeBtn, ...(mode === 'agent' ? styles.modeActive : {}) }}
+            title="Lance l'agent autonome"
+          >
+            Agent
+          </button>
+        </div>
         <input
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Mission : crée une landing page pour Trappist…"
+          placeholder={mode === 'agent' ? "Mission : crée une landing page pour Trappist…" : "Pose ta question…"}
           disabled={loading}
           style={styles.input}
         />
-        <button onClick={() => void runAgent()} disabled={loading || !input.trim()} style={styles.sendBtn} title="Lancer l'agent">
+        <button onClick={submit} disabled={loading || !input.trim()} style={styles.sendBtn} title={mode === 'agent' ? "Lancer l'agent" : "Envoyer la question"}>
           {running ? '⏳' : '➤'}
-        </button>
-        <button onClick={() => void quickAsk()} disabled={loading || !input.trim()} style={{ ...styles.sendBtn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }} title="Question rapide">
-          ?
         </button>
         {running && <button onClick={stop} style={styles.stopBtn}>■</button>}
       </div>
@@ -292,6 +316,30 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '10px',
     borderTop: '1px solid var(--tc-border)',
     flexShrink: 0,
+    alignItems: 'center',
+  },
+  modeToggle: {
+    display: 'flex',
+    gap: '4px',
+    backgroundColor: 'var(--tc-bg-elevated)',
+    border: '1px solid var(--tc-border)',
+    borderRadius: '4px',
+    padding: '2px',
+  },
+  modeBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--tc-text-muted)',
+    cursor: 'pointer',
+    fontSize: '11px',
+    padding: '5px 9px',
+    borderRadius: '3px',
+    fontWeight: 600,
+    fontFamily: "'Courier New', Consolas, monospace",
+  },
+  modeActive: {
+    backgroundColor: 'var(--tc-primary)',
+    color: 'var(--tc-bg)',
   },
   input: {
     flex: 1,
