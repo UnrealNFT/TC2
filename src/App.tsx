@@ -426,7 +426,7 @@ function App() {
                 </div>
                 <iframe
                   key={previewKey}
-                  src={`http://localhost:4269/api/preview/${previewEntry}?base=${encodeURIComponent(activePath)}`}
+                  src={`http://localhost:4264269/api/preview/${previewEntry}?base=${encodeURIComponent(activePath)}`}
                   style={{ flex: 1, border: 'none', backgroundColor: '#fff' }}
                   title="preview"
                 />
@@ -487,7 +487,6 @@ function App() {
 const styles: Record<string, React.CSSProperties> = {
   app: {
     display: 'flex',
-    flex: 1,
     flexDirection: 'column',
     height: '100vh',
     backgroundColor: 'var(--tc-bg)',
