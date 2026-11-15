@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import threading
 import os
@@ -11,6 +12,15 @@ from agent import loop, tools
 from agent.brain import chat_classifier, kimi_final_review
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 executor = ThreadPoolExecutor(max_workers=1)
 agent_lock = threading.Lock()
 
