@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { requireBase } from '../lib/workspace.js'
 
 const router = Router()
 
@@ -74,25 +75,14 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
   }
 }
 
-function decodeBase(raw) {
-  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
-  let s = typeof raw === 'string' ? raw : String(raw)
-  try { s = decodeURIComponent(s) } catch { /* ignore */ }
-  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
-}
-
-function resolveBase(req) {
-  return decodeBase(req.body?.base ?? req.query?.base)
-}
-
 router.get('/list', (_req, res) => {
   res.json(Object.keys(TEMPLATES))
 })
 
 router.post('/create', async (req, res) => {
   const { name, template } = req.body
-  const base = resolveBase(req)
+  const base = requireBase(req, res)
+  if (!base) return
 
   if (!name || !template || !TEMPLATES[template]) {
     return res.status(400).json({ error: 'name or template invalid' })
