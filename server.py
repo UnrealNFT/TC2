@@ -8,6 +8,11 @@ import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+from dotenv import load_dotenv
+
+# Charger les variables d'environnement AVANT les imports qui en dépendent
+load_dotenv()
+
 from agent import loop, tools
 from agent.brain import chat_classifier, kimi_final_review, repondre_conversation
 
@@ -170,6 +175,12 @@ async def run_agent(body: RunBody):
 @app.get("/agent/status")
 async def status():
     return {"running": agent_running, "tours": agent_tours}
+
+
+@app.post("/agent/stop")
+async def stop_agent():
+    loop.request_stop()
+    return {"status": "ok", "message": "Arrêt demandé."}
 
 
 @app.post("/agent/task")
