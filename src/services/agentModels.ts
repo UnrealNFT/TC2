@@ -5,6 +5,15 @@ export interface KimiResponse {
 }
 
 export async function callWaveSpeed(question: string): Promise<KimiResponse> {
+  const apiKey =
+    import.meta.env.VITE_WAVESPEED_API_KEY ||
+    import.meta.env.VITE_WAVESPEED_KEY ||
+    import.meta.env.WAVESPEED_API_KEY
+
+  if (!apiKey) {
+    throw new Error('Clé WaveSpeed manquante : définis VITE_WAVESPEED_API_KEY dans ton .env')
+  }
+
   const res = await axios.post(
     'https://llm.wavespeed.ai/v1/chat/completions',
     {
@@ -21,7 +30,7 @@ export async function callWaveSpeed(question: string): Promise<KimiResponse> {
     },
     {
       headers: {
-        Authorization: `Bearer ${import.meta.env.WAVESPEED_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       timeout: 60_000,
