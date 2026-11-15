@@ -2,10 +2,12 @@ import type React from 'react'
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { Sidebar } from './components/Sidebar'
 import { FileExplorer } from './components/FileExplorer'
+import { ProjectExplorer } from './components/ProjectExplorer'
 import { GitPanel } from './components/GitPanel'
 import { TabbedEditor } from './components/TabbedEditor'
 import { AgentPanel } from './components/AgentPanel'
 import { TerminalPanel } from './components/TerminalPanel'
+import { MenuBar } from './components/MenuBar'
 import { useWorkspace } from './hooks/useWorkspace'
 import { useGitHubRepos } from './hooks/useGitHubRepos'
 import { localApi } from './services/localApi'
@@ -143,9 +145,11 @@ function App() {
   const handleAddWorkspace = async () => {
     try {
       const absPath = await requestDirectory()
-      localApi.setWorkspace(absPath)
+      await localApi.setWorkspace(absPath)
       await localApi.listFiles('')
       addWorkspace(absPath)
+      setOpenFiles([])
+      setActiveFilePath(null)
       setRefreshKey((k) => k + 1)
       showToast(`Dossier ouvert : ${absPath}`)
     } catch (e: any) {
@@ -153,9 +157,11 @@ function App() {
       const fallback = window.prompt('Chemin absolu du dossier projet :', 'C:\\Users\\Djaf\\MonProjet')
       if (!fallback) return
       try {
-        localApi.setWorkspace(fallback.trim())
+        await localApi.setWorkspace(fallback.trim())
         await localApi.listFiles('')
         addWorkspace(fallback.trim())
+        setOpenFiles([])
+        setActiveFilePath(null)
         setRefreshKey((k) => k + 1)
         showToast(`Dossier ouvert : ${fallback.trim()}`)
       } catch (e2: any) {
@@ -176,12 +182,12 @@ function App() {
     }
 
     const projectPath = pathJoin(parent, sanitizeName(name))
-
     const template = window.prompt('Template ? (vanilla, react, node)', 'vanilla') || 'vanilla'
 
     try {
       await localApi.createProject(name, template, parent)
       addWorkspace(projectPath)
+      await localApi.setWorkspace(projectPath)
       setOpenFiles([])
       setActiveFilePath(null)
       setRefreshKey((k) => k + 1)
@@ -193,11 +199,40 @@ function App() {
     }
   }
 
-  const handleSelectWorkspace = (path: string) => {
+  const handleSelectProject = async (path: string) => {
+    await localApi.setWorkspace(path)
+    addWorkspace(path)
     setActive(path)
     setOpenFiles([])
     setActiveFilePath(null)
+    setSidebarView('files')
     setRefreshKey((k) => k + 1)
+  }
+
+  const handleSaveActive = async () => {
+    if (!activeFilePath) return
+    const file = openFiles.find((f) => f.path === activeFilePath)
+    if (!file) return
+    try {
+      await localApi.writeFile(activeFilePath, file.content)
+      markSaved(activeFilePath)
+      showToast('Enregistré')
+    } catch (e: any) {
+      showToast(`Erreur sauvegarde : ${e.message}`)
+    }
+  }
+
+  const handleSaveAll = async () => {
+    for (const f of openFiles) {
+      if (f.content === f.savedContent) continue
+      try {
+        await localApi.writeFile(f.path, f.content)
+        markSaved(f.path)
+      } catch (e) {
+        console.error(e)
+      }
+    }
+    showToast('Tout enregistré')
   }
 
   const connectGitHub = async () => {
@@ -272,6 +307,13 @@ function App() {
 
   const sidebarExtra = sidebarView === 'files' ? (
     <FileExplorer activePath={activePath} onOpenFile={openFile} refreshKey={refreshKey} />
+  ) : sidebarView === 'projects' ? (
+    <ProjectExplorer
+      activePath={activePath}
+      onSelectProject={handleSelectProject}
+      onNewProject={handleNewProject}
+      refreshKey={refreshKey}
+    />
   ) : sidebarView === 'git' ? (
     <GitPanel activePath={activePath} refreshKey={refreshKey} />
   ) : sidebarView === 'settings' ? (
@@ -342,6 +384,17 @@ function App() {
         </div>
       </div>
 
+      <MenuBar
+        onOpenFolder={handleAddWorkspace}
+        onNewProject={handleNewProject}
+        onSave={handleSaveActive}
+        onSaveAll={handleSaveAll}
+        onExportZip={exportZip}
+        onImportZip={importZip}
+        onTogglePreview={() => setRightTab((t) => t === 'preview' ? 'none' : 'preview')}
+        previewOpen={rightTab === 'preview'}
+      />
+
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Sidebar
           view={sidebarView}
@@ -350,7 +403,7 @@ function App() {
           activePath={activePath}
           onAddWorkspace={handleAddWorkspace}
           onNewProject={handleNewProject}
-          onSelectWorkspace={handleSelectWorkspace}
+          onSelectWorkspace={handleSelectProject}
           onRemoveWorkspace={removeWorkspace}
           extra={sidebarExtra}
         />
