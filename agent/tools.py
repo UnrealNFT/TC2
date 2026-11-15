@@ -8,11 +8,13 @@ Principes de sécurité :
 - les modifications destructrices sauvegardent automatiquement l'ancien fichier
 - les fichiers trop gros sont refusés
 - chaque action est journalisée dans .agent/actions.log
+- le workspace initial est verrouillé : on ne peut pas en sortir via set_root
 """
 import os, json, subprocess, urllib.request, shutil
 from datetime import datetime
 
 ROOT = os.path.abspath(os.environ.get("AGENT_ROOT", os.getcwd()))
+ROOT_INITIAL = ROOT  # verrou : set_root ne peut pas sortir de ce dossier
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 Mo max pour write_file
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "dist", ".agent", ".venv", ".idea", ".vscode"}
 
@@ -30,28 +32,52 @@ def _log_action(tool: str, args: dict, result: str):
         pass
 
 
+def _inside_initial(p: str) -> bool:
+    """Vérifie que le chemin reste dans ROOT_INITIAL."""
+    if not ROOT_INITIAL:
+        return True
+    return p.startswith(ROOT_INITIAL) or p.lower().startswith(ROOT_INITIAL.lower())
+
+
+def _normalize_path(path: str) -> str:
+    """Convertit un chemin absolu qui pointe dans ROOT en chemin relatif.
+    Supporte Windows (C:\...) et Unix (/...)."""
+    if not path:
+        return path
+    path = path.strip().replace("\n", "").replace("\r", "")
+    if not os.path.isabs(path):
+        return path
+    abs_root = os.path.abspath(ROOT)
+    p = os.path.abspath(path)
+    if p.lower().startswith(abs_root.lower()):
+        rel = os.path.relpath(p, abs_root)
+        return rel
+    return path
+
+
 def _safe(path: str) -> str:
-    """Normalise un chemin relatif et vérifie qu'il reste dans ROOT.
-    Protège aussi contre les symlinks et les chemins absolus externes."""
+    """Normalise un chemin relatif et vérifie qu'il reste dans ROOT_INITIAL.
+    Accepte les chemins absolus si ils sont dans le projet."""
     if not path:
         raise ValueError("Chemin vide")
+    path = _normalize_path(path)
     # Supprime les sauts de ligne et caractères dangereux
     path = path.replace("\n", "").replace("\r", "").strip()
-    # Interdit les composants dangereux
-    for part in path.replace("\\", "/").split("/"):
-        if part in ("..", "", "."):
-            continue
     joined = os.path.join(ROOT, path)
     p = os.path.abspath(os.path.realpath(joined))
-    if not p.startswith(ROOT):
+    if not _inside_initial(p):
         raise ValueError(f"Chemin hors projet: {path}")
     return p
 
 
 def set_root(path: str) -> str:
-    """Change le dossier de travail de l'agent. Crée le dossier s'il n'existe pas."""
+    """Change le dossier de travail de l'agent. Crée le dossier s'il n'existe pas.
+    Interdit de sortir de ROOT_INITIAL."""
     global ROOT
-    p = os.path.abspath(path)
+    path = _normalize_path(path)
+    p = os.path.abspath(os.path.join(ROOT_INITIAL, path))
+    if not _inside_initial(p):
+        raise ValueError(f"set_root interdit hors du workspace initial: {path}")
     os.makedirs(p, exist_ok=True)
     if not os.path.isdir(p):
         raise ValueError(f"Dossier invalide: {path}")
