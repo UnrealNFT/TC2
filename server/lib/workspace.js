@@ -5,7 +5,9 @@ export function decodeBase(raw) {
   let s = typeof raw === 'string' ? raw : String(raw)
   try { s = decodeURIComponent(s) } catch { /* ignore */ }
   if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
+  const resolved = path.resolve(s)
+  if (!path.isAbsolute(resolved)) return null
+  return resolved
 }
 
 export function resolveBase(req) {
