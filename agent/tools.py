@@ -1,6 +1,7 @@
 """Outils basiques pour l'agent : fichiers, shell, git, contexte."""
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -82,6 +83,17 @@ def _path(relative: str) -> str:
     return full
 
 
+def _backup_path(full: str) -> str:
+    """Chemin de backup local avant modification."""
+    base = full + ".agent.bak"
+    i = 1
+    candidate = base
+    while os.path.exists(candidate):
+        candidate = f"{full}.agent.bak.{i}"
+        i += 1
+    return candidate
+
+
 def exists_file(path: str) -> bool:
     return os.path.isfile(_path(path))
 
@@ -100,9 +112,52 @@ def write_file(path: str, content: str) -> str:
     os.makedirs(os.path.dirname(full) or ROOT, exist_ok=True)
     if not isinstance(content, str):
         content = str(content)
+
+    # Backup avant écrasement, si le fichier existe et n'est pas vide
+    if os.path.isfile(full):
+        try:
+            existing_size = os.path.getsize(full)
+            if existing_size > 0:
+                shutil.copy2(full, _backup_path(full))
+        except Exception:
+            pass
+
+    # Protection contre écriture vide ou très courte sur fichier existant non vide
+    if os.path.isfile(full) and len(content.strip()) < 10:
+        existing = read_file(path)
+        if len(existing.strip()) > 50:
+            return f"ERREUR: refus d'écraser {path} avec un contenu quasi vide ({len(content)} caractères). Utilise edit_file."
+
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
     return f"ÉCRIT: {path}"
+
+
+def edit_file(path: str, old_string: str, new_string: str) -> str:
+    """Remplace la première occurrence de old_string par new_string dans un fichier."""
+    full = _path(path)
+    if not os.path.isfile(full):
+        return f"ERREUR: {path} n'existe pas, utilise write_file"
+
+    try:
+        with open(full, "r", encoding="utf-8") as f:
+            content = f.read()
+    except Exception as e:
+        return f"ERREUR LECTURE {path}: {e}"
+
+    if old_string not in content:
+        return f"ERREUR: old_string introuvable dans {path}"
+
+    # Backup
+    try:
+        shutil.copy2(full, _backup_path(full))
+    except Exception:
+        pass
+
+    new_content = content.replace(old_string, new_string, 1)
+    with open(full, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    return f"ÉDITÉ: {path}"
 
 
 def append_file(path: str, content: str) -> str:
@@ -122,7 +177,6 @@ def delete_file(path: str) -> str:
 
 
 def rename_file(src: str, dst: str) -> str:
-    import shutil
     shutil.move(_path(src), _path(dst))
     return f"RENOMMÉ: {src} -> {dst}"
 
@@ -137,7 +191,6 @@ def mkdir(path: str) -> str:
 
 
 def copy_file(src: str, dst: str) -> str:
-    import shutil
     shutil.copy2(_path(src), _path(dst))
     return f"COPIÉ: {src} -> {dst}"
 
@@ -147,7 +200,6 @@ def delete(path: str) -> str:
     if os.path.isfile(full):
         os.remove(full)
     elif os.path.isdir(full):
-        import shutil
         shutil.rmtree(full)
     return f"SUPPRIMÉ: {path}"
 
@@ -279,6 +331,7 @@ def commit_push(message: str) -> str:
 TOOLS: dict[str, Callable] = {
     "set_root": initialize_root,
     "write_file": write_file,
+    "edit_file": edit_file,
     "read_file": read_file,
     "append_file": append_file,
     "delete_file": delete_file,
