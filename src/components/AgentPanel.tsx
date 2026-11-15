@@ -1,7 +1,3 @@
-      let summary = data.resume || 'Mission terminée.'
-      if (data.tours && data.tours.length > 0) {
-        const last = data.tours[data.tours.length - 1]
-        const cycle = last.cycle ?? 1
-        const tour = last.tour ?? data.tours.length
-        summary = `Cycle ${cycle} — Tour ${tour} — ${last.action || 'terminé'}\n${last.pensee || ''}`
-      }
+          <span style={{ ...styles.badge, backgroundColor: running ? 'var(--tc-primary)' : 'var(--tc-bg-elevated)', color: running ? 'var(--tc-bg)' : 'var(--tc-text-muted)' }}>
+            {running ? `C${Math.ceil(tourCount / 10)} T${tourCount}` : 'idle'}
+          </span>
