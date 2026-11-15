@@ -4,23 +4,13 @@ import path from 'node:path'
 import { Readable } from 'node:stream'
 import archiver from 'archiver'
 import unzipper from 'unzipper'
+import { requireBase } from '../lib/workspace.js'
 
 const router = Router()
 
-function decodeBase(raw) {
-  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
-  let s = typeof raw === 'string' ? raw : String(raw)
-  try { s = decodeURIComponent(s) } catch { /* ignore */ }
-  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
-}
-
-function resolveBase(req) {
-  return decodeBase(req.body?.base ?? req.query?.base)
-}
-
 router.get('/export', async (req, res) => {
-  const base = resolveBase(req)
+  const base = requireBase(req, res)
+  if (!base) return
   if (!fs.existsSync(base)) {
     return res.status(404).json({ error: 'workspace not found' })
   }
@@ -34,7 +24,8 @@ router.get('/export', async (req, res) => {
 })
 
 router.post('/import', async (req, res) => {
-  const base = resolveBase(req)
+  const base = requireBase(req, res)
+  if (!base) return
   if (!req.body?.zipUrl && !req.body?.zipBase64) {
     return res.status(400).json({ error: 'zipUrl or zipBase64 required' })
   }
