@@ -6,7 +6,7 @@ export interface KimiResponse {
 
 export async function callWaveSpeed(question: string): Promise<KimiResponse> {
   const res = await axios.post(
-    'http://localhost:8000/kimi',
+    'http://localhost:4269/kimi',
     { question: question.slice(0, 4000) },
     {
       headers: {

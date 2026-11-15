@@ -28,10 +28,12 @@ interface AgentStatus {
 
 type Mode = 'agent' | 'ask'
 
-const STATUS_URL = 'http://localhost:8000/agent/status'
-const RUN_URL = 'http://localhost:8000/agent/run'
-const STOP_URL = 'http://localhost:8000/agent/stop'
-const ASK_URL = 'http://localhost:8000/ask'
+// Backend unifié (FastAPI) : tout passe par le port 4269
+const API_BASE = 'http://localhost:4269'
+const STATUS_URL = `${API_BASE}/agent/status`
+const RUN_URL = `${API_BASE}/agent/run`
+const STOP_URL = `${API_BASE}/agent/stop`
+const ASK_URL = `${API_BASE}/ask`
 
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
   const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
