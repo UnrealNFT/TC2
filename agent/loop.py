@@ -2,6 +2,7 @@
 """Boucle principale de l'agent : cycles, DeepSeek, Gemma, Kimi, narration."""
 import json
 import os
+import re
 from typing import Callable
 
 from . import tools
@@ -203,8 +204,28 @@ def _kimi_valide(mission: str, contexte: str) -> tuple[bool, str]:
     try:
         reponse = brain.kimi_final_review(mission, contexte)
         texte_bas = reponse.lower()
-        valide = "done" in texte_bas or "ok" in texte_bas or "valid" in texte_bas
-        return valide, reponse
+
+        # Vérifie explicitement les refus avant les validations
+        negatifs = [
+            r"pas\s+(?:ok|done|valid|terminé|fini|prêt)",
+            r"non\s+(?:ok|valid|validé|terminé)",
+            r"pas\s+encore",
+            r"incomplet",
+            r"non\s+résolu",
+            r"problèmes?\s+restant",
+        ]
+        for pattern in negatifs:
+            if re.search(pattern, texte_bas):
+                return False, reponse
+
+        # Vérifie une validation explicite
+        validation = re.search(
+            r"(?:^|[^a-zàâäéèêëïîôùûüç])"
+            r"(?:ok|done|validé|validée|terminé|terminée|fini|prêt|correct|bon)"
+            r"(?:[^a-zàâäéèêëïîôùûüç]|$)",
+            texte_bas,
+        )
+        return bool(validation), reponse
     except Exception as e:
         return False, f"Erreur appel Kimi: {e}"
 
@@ -263,7 +284,7 @@ def _run_cycle(
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
         if guidance_kimi:
-            prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
+            prompt_sup += f"\n\nGUIDANCE KIMI : {guidance_kimi}"
             guidance_kimi = ""  # consommé immédiatement
 
         # Injection mémoire : derniers retours Kimi sur cette mission

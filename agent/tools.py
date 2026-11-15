@@ -33,12 +33,19 @@ _load_protected_paths()
 
 
 def _is_critical_path(path: str) -> bool:
-    """Vérifie si le chemin correspond exactement à un dossier protégé."""
-    normalized = os.path.normcase(os.path.abspath(path))
-    for protected in PROTECTED_PATHS:
-        if normalized == protected:
-            return True
-    return False
+    """Vérifie si le chemin est un dossier protégé OU à l'intérieur d'un dossier protégé."""
+    try:
+        normalized = os.path.normcase(os.path.abspath(path))
+        for protected in PROTECTED_PATHS:
+            # Rejet direct si égal
+            if normalized == protected:
+                return True
+            # Rejet si le chemin est DANS un dossier protégé
+            if normalized.startswith(protected + os.sep):
+                return True
+        return False
+    except Exception:
+        return True
 
 
 def initialize_root(path: str):
@@ -59,7 +66,7 @@ def _path(relative: str) -> str:
     else:
         full = os.path.normpath(os.path.join(ROOT, relative))
 
-    # Empêche de sortir du workspace vers un dossier critique exact
+    # Empêche de sortir du workspace vers un dossier protégé exact
     if _is_critical_path(full):
         raise PermissionError(
             f"Chemin interdit : {relative} correspond à un dossier protégé."
@@ -229,9 +236,9 @@ def test_file(path: str) -> str:
     full = _path(path)
     ext = Path(full).suffix.lower()
     if ext == ".py":
-        return shell(f"python -m py_compile \"{full}\"")
+        return shell(f'python -m py_compile "{full}"')
     if ext in (".js", ".jsx", ".ts", ".tsx"):
-        return shell(f"node --check \"{full}\"")
+        return shell(f'node --check "{full}"')
     if ext == ".html":
         contenu = read_file(path)
         if not contenu.strip().startswith("<"):

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from agent import loop, tools
-from agent.brain import chat_classifier, kimi_final_review, repondre_conversation
+from agent.brain import kimi_final_review, repondre_conversation
 
 app = FastAPI()
 
