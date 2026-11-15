@@ -11,6 +11,11 @@ interface ProjectExplorerProps {
 
 const DEFAULT_PARENT = 'C:\\Users\\Djaf'
 
+function joinPath(parent: string, name: string) {
+  const sep = parent.includes('\\') ? '\\' : '/'
+  return parent.replace(/[\\/]+$/, '') + sep + name
+}
+
 export function ProjectExplorer({ activePath, onSelectProject, onNewProject, refreshKey }: ProjectExplorerProps) {
   const [parent, setParent] = useState(DEFAULT_PARENT)
   const [items, setItems] = useState<Array<{ name: string; path: string; type: string }>>([])
@@ -65,17 +70,18 @@ export function ProjectExplorer({ activePath, onSelectProject, onNewProject, ref
           <div style={styles.empty}>Aucun dossier ici.</div>
         )}
         {items.map((item) => {
-          const isActive = activePath.toLowerCase() === item.path.toLowerCase()
+          const full = joinPath(parent, item.name)
+          const isActive = activePath.toLowerCase() === full.toLowerCase()
           return (
             <div
-              key={item.path}
-              onClick={() => onSelectProject(item.path)}
+              key={full}
+              onClick={() => onSelectProject(full)}
               style={{
                 ...styles.item,
                 backgroundColor: isActive ? 'var(--tc-selected)' : 'transparent',
                 borderColor: isActive ? 'var(--tc-primary)' : 'transparent',
               }}
-              title={item.path}
+              title={full}
             >
               <span style={{ fontSize: '14px' }}>📁</span>
               <span style={{

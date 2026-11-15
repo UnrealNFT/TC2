@@ -5,6 +5,7 @@ const API = 'http://localhost:4269'
 let base = ''
 
 export function setWorkspace(path: string) {
+  if (!/^[a-zA-Z]:[\\/]/.test(path) && !path.startsWith('/') && !path.startsWith('\\\\')) return
   base = path
 }
 

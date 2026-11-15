@@ -4,6 +4,11 @@ export function decodeBase(raw) {
   if (!raw) return null
   let s = typeof raw === 'string' ? raw : String(raw)
   try { s = decodeURIComponent(s) } catch { /* ignore */ }
+  s = s.trim()
+  const looksAbsolute = process.platform === 'win32'
+    ? /^[a-zA-Z]:[\\/]/.test(s) || s.startsWith('\\\\')
+    : s.startsWith('/')
+  if (!looksAbsolute) return null
   if (process.platform === 'win32') s = s.replace(/\//g, '\\')
   const resolved = path.resolve(s)
   if (!path.isAbsolute(resolved)) return null

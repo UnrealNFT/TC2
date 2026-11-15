@@ -199,6 +199,7 @@ function App() {
   }
 
   const handleSelectWorkspace = (path: string) => {
+    if (!/^[a-zA-Z]:[\\/]/.test(path) && !path.startsWith('/') && !path.startsWith('\\\\')) return
     setActive(path)
     localApi.setWorkspace(path)
     setOpenFiles([])
