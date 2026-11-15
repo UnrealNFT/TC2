@@ -19,6 +19,22 @@ MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 Mo max pour write_file
 SKIP_DIRS = {".git", "node_modules", "__pycache__", "dist", ".agent", ".venv", ".idea", ".vscode"}
 
 
+def initialize_root(path: str) -> str:
+    """Change le workspace initial et courant. Appelé par le serveur à chaque requête.
+    Après cette initialisation, set_root ne pourra plus sortir de ce dossier."""
+    global ROOT, ROOT_INITIAL
+    p = os.path.abspath(path)
+    os.makedirs(p, exist_ok=True)
+    if not os.path.isdir(p):
+        raise ValueError(f"Dossier invalide: {path}")
+    ROOT = p
+    ROOT_INITIAL = p
+    os.chdir(ROOT)
+    os.environ["AGENT_ROOT"] = p
+    _log_action("initialize_root", {"path": p}, "OK")
+    return f"Workspace initialisé: {ROOT}"
+
+
 def _log_action(tool: str, args: dict, result: str):
     """Journal de chaque action outil."""
     log_dir = os.path.join(ROOT, ".agent")
@@ -292,4 +308,5 @@ TOOLS = {
     "commit_push": commit_push,
     "trappist_generate": trappist_generate,
     "set_root": set_root,
+    "initialize_root": initialize_root,
 }
