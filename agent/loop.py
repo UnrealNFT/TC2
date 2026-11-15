@@ -22,6 +22,10 @@ def request_stop():
     STOP_FLAG["stop"] = True
 
 
+def _was_stopped() -> bool:
+    return STOP_FLAG["stop"]
+
+
 def _executer_action(action: dict) -> str:
     nom = action.get("action", "done")
     args = action.get("args", {})
@@ -108,6 +112,8 @@ def _verifier_done_valide(objectif: str, historique: list) -> bool:
 
 def _relire_finale(objectif: str, max_fix: int = 3) -> int:
     """Relecture finale automatique : lit les fichiers et corrige si vide ou cassé."""
+    if _was_stopped():
+        return 0
     fichiers = []
     for nom in tools.list_tree().splitlines():
         nom = nom.strip()
@@ -116,6 +122,8 @@ def _relire_finale(objectif: str, max_fix: int = 3) -> int:
 
     fixes = 0
     for chemin in fichiers:
+        if _was_stopped():
+            break
         contenu = tools.read_file(chemin)
         if not contenu or len(contenu.strip()) < 10:
             action = brain.decider(
@@ -142,6 +150,8 @@ def _callback_safety(callback, tour, decision, narration):
 
 def _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only: bool = False):
     """Décision du prochain tour, avec option fallback complet sur Kimi."""
+    if _was_stopped():
+        return {"pensee": "Arrêt demandé", "action": "done", "args": {"resume": "Arrêt demandé par l'utilisateur."}}
     if kimi_only:
         try:
             fallback = brain.secours_kimi(
@@ -277,7 +287,7 @@ def _run_cycle(
 ):
     for tour_in_cycle in range(1, CYCLE_SIZE + 1):
         tour_abs = start_tour + tour_in_cycle - 1
-        if tour_abs > max_tours:
+        if tour_abs > max_tours or _was_stopped():
             break
 
         if STOP_FLAG["stop"]:
@@ -381,7 +391,7 @@ def _run_cycle(
         if decision.get("action") == "done":
             return True, tour_abs, guidance_kimi, False
 
-    return False, tour_abs, guidance_kimi, False
+    return False, tour_abs, guidance_kimi, _was_stopped()
 
 
 def boucle(
@@ -424,7 +434,6 @@ def boucle(
 
     while tour_courant <= max_tours and not termine:
         if STOP_FLAG["stop"]:
-            termine = True
             break
 
         # Si Ollama a planté plusieurs fois, passer entièrement sur Kimi
@@ -446,9 +455,6 @@ def boucle(
             kimi_only=kimi_only,
         )
         if stopped:
-            termine = True
-            if callback:
-                _callback_safety(callback, dernier_tour, {"action": "done", "args": {}}, "🛑 Mission arrêtée par l'utilisateur.")
             break
 
         # Détection d'échec Ollama récurrent
@@ -471,6 +477,13 @@ def boucle(
                 nb_commits += 1
             except Exception as e:
                 print(f"[commit auto] {e}")
+
+    # Si arrêt demandé, on s'arrête immédiatement sans validation finale Kimi
+    if _was_stopped():
+        final_msg = "Mission arrêtée par l'utilisateur."
+        if callback:
+            _callback_safety(callback, 0, {"action": "done", "args": {}}, f"🛑 {final_msg}")
+        return
 
     # Relecture finale optionnelle
     fixes = _relire_finale(objectif)
@@ -496,6 +509,9 @@ def boucle(
     iterations_kimi = 0
     max_iterations_kimi = 3
     while not valide and iterations_kimi < max_iterations_kimi:
+        if _was_stopped():
+            break
+
         iterations_kimi += 1
         # Enregistrer le retour dans la mémoire
         memory.save_kimi_feedback(objectif, dernier_tour, ", ".join(fichiers), "validation finale", reponse_kimi)
@@ -523,6 +539,9 @@ def boucle(
         )
         cycle += 1
 
+        if stopped:
+            break
+
         # Re-snapshot
         fichiers = []
         for nom in tools.list_tree().splitlines():
@@ -536,7 +555,9 @@ def boucle(
         valide, reponse_kimi = _kimi_valide(objectif, bloc)
 
     # Dernier message
-    if valide:
+    if _was_stopped():
+        final_msg = "Mission arrêtée par l'utilisateur."
+    elif valide:
         final_msg = f"Mission validée par Kimi. {reponse_kimi[:300]}"
     else:
         final_msg = f"Mission terminée après {max_iterations_kimi} itérations Kimi. Dernier avis : {reponse_kimi[:500]}"
