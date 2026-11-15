@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 ROOT = os.getcwd()
 
@@ -41,6 +42,32 @@ def write_file(path: str, content: str) -> str:
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
     return f"ÉCRIT: {path}"
+
+
+def append_file(path: str, content: str) -> str:
+    full = _path(path)
+    os.makedirs(os.path.dirname(full) or ROOT, exist_ok=True)
+    with open(full, "a", encoding="utf-8") as f:
+        f.write(content)
+    return f"AJOUTÉ: {path}"
+
+
+def delete_file(path: str) -> str:
+    full = _path(path)
+    if os.path.isfile(full):
+        os.remove(full)
+        return f"SUPPRIMÉ: {path}"
+    return f"INEXISTANT: {path}"
+
+
+def rename_file(src: str, dst: str) -> str:
+    import shutil
+    shutil.move(_path(src), _path(dst))
+    return f"RENOMMÉ: {src} -> {dst}"
+
+
+def move_file(src: str, dst: str) -> str:
+    return rename_file(src, dst)
 
 
 def mkdir(path: str) -> None:
@@ -143,3 +170,23 @@ def commit_push(message: str) -> str:
     result = shell(f'git commit -m "{message}"')
     shell("git push")
     return result
+
+
+# Dictionnaire utilisé par agent.loop._executer_action
+TOOLS: dict[str, Callable] = {
+    "set_root": initialize_root,
+    "write_file": write_file,
+    "read_file": read_file,
+    "append_file": append_file,
+    "delete_file": delete_file,
+    "copy_file": copy_file,
+    "rename_file": rename_file,
+    "move_file": move_file,
+    "exists_file": exists_file,
+    "list_files": list_files,
+    "list_tree": list_tree,
+    "get_context": get_context,
+    "shell": shell,
+    "git_status": git_status,
+    "commit_push": commit_push,
+}
