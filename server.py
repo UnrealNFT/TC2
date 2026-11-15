@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import threading
@@ -9,7 +9,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from agent import loop, tools
-from agent.brain import chat_classifier, kimi_final_review
+from agent.brain import chat_classifier, kimi_final_review, discuter, decider
 
 app = FastAPI()
 
@@ -29,9 +29,20 @@ agent_running = False
 agent_tours = []
 current_workspace = ""
 
+# Mémoire conversationnelle Ask par workspace (volatil RAM)
+ask_sessions: dict[str, list[dict]] = {}
+MAX_ASK_HISTORY = 20
+
+
+class HistoryMsg(BaseModel):
+    role: str  # 'user' | 'assistant'
+    content: str
+
 
 class AskBody(BaseModel):
     question: str
+    workspace: Optional[str] = "__global__"
+    history: Optional[List[HistoryMsg]] = []
     file_content: Optional[str] = ""
     file_path: Optional[str] = ""
 
@@ -72,15 +83,83 @@ async def health():
     return {"status": "ok", "agent_running": agent_running, "workspace": current_workspace}
 
 
+def _systeme_ask() -> str:
+    return (
+        "Tu es TrappistCode, l'assistant de développement de l'utilisateur. "
+        "Tu as accès au contexte du projet. "
+        "Réponds en français de façon naturelle, concise, utile. "
+        "Si la question porte sur le code, explique ou propose directement. "
+        "Si la demande nécessite de modifier/créer/supprimer des fichiers, dis-le explicitement. "
+        "Tu conserveras le fil de la conversation grâce à l'historique."
+    )
+
+
+def _build_context(file_path: str, file_content: str, workspace: str) -> str:
+    parts = []
+    if workspace and workspace != "__global__":
+        parts.append(f"Workspace actuel : {workspace}")
+    if file_path:
+        parts.append(f"Fichier ouvert : {file_path}")
+        if file_content:
+            parts.append(f"Contenu (extrait) :\n{file_content[:3000]}")
+    try:
+        files = tools.list_tree().splitlines()[:30]
+        if files:
+            parts.append("Structure du projet :")
+            parts.extend(files)
+    except Exception:
+        pass
+    return "\n".join(parts)
+
+
 @app.post("/ask")
 async def ask(body: AskBody):
-    """Question simple ou requête rapide sans lancer un agent complet."""
+    """Discussion avec mémoire conversationnelle par workspace + contexte fichier."""
     try:
-        category = chat_classifier.classify(body.question)
-        if category == "chat":
-            return {"final": chat_classifier.answer(body.question)}
-        # Sinon, exécution directe d'une instruction simple
-        return {"final": f"Mode code détecté. Pour exécuter : POST /agent/run avec workspace."}
+        session_key = body.workspace or "__global__"
+
+        # Initialiser / enrichir la session serveur
+        session = ask_sessions.setdefault(session_key, [])
+        # on merge l'historique client (si présent) avec la session serveur
+        if body.history:
+            for h in body.history[-10:]:
+                if {'role': h.role, 'content': h.content} not in [dict(m) for m in session[-10:]]:
+                    session.append({"role": h.role, "content": h.content})
+
+        contexte = _build_context(body.file_path or "", body.file_content or "", session_key)
+
+        messages = [
+            {"role": "system", "content": _systeme_ask()},
+        ]
+        # historique conversationnel (user / assistant) avant la question en cours
+        for m in session[-MAX_ASK_HISTORY:]:
+            role = m.get("role", "user")
+            if role not in ("user", "assistant"):
+                continue
+            messages.append({"role": role, "content": m.get("content", "")})
+
+        # ajout contexte + question
+        prompt = body.question
+        if contexte:
+            prompt = f"[Contexte projet]\n{contexte}\n\n[Question]\n{body.question}"
+        messages.append({"role": "user", "content": prompt})
+
+        # Classification fallback
+        classification = chat_classifier.classify(body.question)
+        if classification == "chat":
+            answer = discuter(body.question)
+        else:
+            # Code / projet : on donne un avis/explication en s'appuyant sur le contexte
+            answer = discuter(
+                f"Réponds comme un assistant de code. Contexte: {contexte[:2000] if contexte else 'aucun'}.\n\nQuestion: {body.question}"
+            )
+
+        # Mise à jour de la mémoire
+        session.append({"role": "user", "content": body.question})
+        session.append({"role": "assistant", "content": answer})
+        ask_sessions[session_key] = session[-MAX_ASK_HISTORY:]
+
+        return {"final": answer}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -114,7 +193,6 @@ async def status():
 async def task(body: TaskBody):
     """Ajoute une tâche à exécuter dès que l'agent actuel est libre."""
     if not agent_running:
-        # Lancer immédiatement
         loop_task = asyncio.get_event_loop()
         await loop_task.run_in_executor(
             executor,
