@@ -1,4 +1,5 @@
-  const cancelRef = useRef(false)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const endRef = useRef<HTMLDivElement>(null)
-  const lastSeenPensee = useRef<string>('')
+    cancelRef.current = false
+    setLoading(true)
+    setRunning(true)
+    lastSeenPensee.current = ''
+    setInput('')
