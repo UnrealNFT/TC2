@@ -61,6 +61,8 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
                 return f"🛠️ DeepSeek OK, Gemma voit un défaut : {avis.get('gemma_raison', 'relire')}. Suite : {suite}"
             return f"✅ Fichier validé (DeepSeek + Gemma). Prochaine étape : {suite}"
         return "✏️ Écriture du fichier..."
+    if action == "edit_file":
+        return "✏️ Modification ciblée du fichier..."
     if action == "read_file":
         lignes = len(str(resultat).splitlines())
         return f"👁️ Lecture ({lignes} lignes)."
@@ -185,16 +187,17 @@ def _detecter_boucle(historique: list) -> str:
     actions = [a.get("action") for a, _ in recent]
 
     # Boucle list_files / read_file répétés
-    if actions.count("list_files") >= 4 or actions.count("read_file") >= 4:
+    if actions.count("list_files") >= 2 or actions.count("read_file") >= 3:
         fichiers = []
         for nom in tools.list_tree().splitlines()[:20]:
             if nom.strip() and not nom.endswith("/"):
                 fichiers.append(nom.strip())
         if fichiers:
             return (
-                "\n\n⚠️ TU TOURNES EN ROND. Arrête list_files/read_file. "
-                "Choisis immédiatement une action concrète : améliorer un fichier existant avec write_file, "
-                "ajouter un nouveau fichier, ou shell/npm. Fichiers disponibles : " + ", ".join(fichiers)
+                "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
+                "Tu dois AGIR maintenant avec edit_file ou write_file. "
+                f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
+                "Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string)."
             )
 
     # Boucle shell répétée avec erreur
@@ -203,8 +206,16 @@ def _detecter_boucle(historique: list) -> str:
         if any(r.startswith("ERREUR") for r in derniers_resultats):
             return (
                 "\n\n⚠️ TU AS FAIT TROP DE shell QUI ÉCHOUENT. "
-                "Arrête shell. Si l'objectif est atteint, appelle done. Sinon fais write_file/read_file."
+                "Arrête shell. Si l'objectif est atteint, appelle done. Sinon fais edit_file/read_file."
             )
+
+    # Boucle write_file/edit_file sans avancer
+    ecrits = [a.get("args", {}).get("path", "") for a, _ in recent if a.get("action") in ("write_file", "edit_file")]
+    if len(ecrits) >= 3 and len(set(ecrits)) == 1:
+        return (
+            f"\n\n⚠️ TU RÉÉCRIS LE MÊME FICHIER ({ecrits[-1]}) SANS ARRÊT. "
+            "Soit il est bon et tu passes à autre chose, soit tu appelles done."
+        )
 
     return ""
 
@@ -212,43 +223,30 @@ def _detecter_boucle(historique: list) -> str:
 def _kimi_valide(mission: str, contexte: str) -> tuple[bool, str]:
     """Demande à Kimi s'il valide le travail. Renvoie (valide, reponse_texte).
 
-    Logique de vote : une phrase contenant un positif mais aussi un négatif
-    est interprétée comme non valide.
+    Règle : un seul mot négatif dans le texte invalide la validation.
+    Kimi doit dire explicitement ok/done/validé SANS aucune réserve.
     """
     try:
         reponse = brain.kimi_final_review(mission, contexte)
         texte_bas = reponse.lower()
 
-        # Découpe en phrases simples pour vérifier les conflits localisés
-        phrases = re.split(r"[.!?\n]+", texte_bas)
-
         positifs = ["ok", "done", "validé", "validée", "terminé", "terminée", "fini", "prêt", "correct"]
-        negatifs = ["pas", "non", "mais", "manque", "erreur", "bug", "bugs", "incomplet", "problème", "problèmes", "refus", "attend"]
-
-        # Phrase par phrase : si une phrase contient un positif + un négatif -> non valide
-        for phrase in phrases:
-            phrase = phrase.strip()
-            if not phrase:
-                continue
-            a_positif = any(re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç]|$)", phrase) for p in positifs)
-            a_negatif = any(re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(n)}(?:[^a-zàâäéèêëïîôùûüç]|$)", phrase) for n in negatifs)
-            if a_positif and a_negatif:
-                return False, reponse
-
-        # Si un mot négatif global apparaît isolément (pas ok, non, incomplet, etc.)
-        patterns_negatifs = [
-            r"(?:^|[^a-zàâäéèêëïîôùûüç])pas\s+(?:ok|done|valid|terminé|fini|prêt)(?:[^a-zàâäéèêëïîôùûüç]|$)",
-            r"(?:^|[^a-zàâäéèêëïîôùûüç])non\s+(?:ok|valid|validé|terminé)(?:[^a-zàâäéèêëïîôùûüç]|$)",
-            r"(?:^|[^a-zàâäéèêëïîôùûüç])incomplet(?:[^a-zàâäéèêëïîôùûüç]|$)",
-            r"(?:^|[^a-zàâäéèêëïîôùûüç])non\s+résolu(?:[^a-zàâäéèêëïîôùûüç]|$)",
+        negatifs = [
+            "pas", "non", "mais", "manque", "erreur", "bug", "bugs", "incomplet",
+            "problème", "problèmes", "refus", "attend", "doit", "devrait", "améliorer",
+            "corriger", "fix", "fixer", "invalide", "incorrect", "défaut", "défauts",
+            "absent", "absente", "manquant", "manquante", "vide", "placeholder",
+            "inachevé", "partiel", "fragment", "buggé", "cassé", "fail", "failed",
         ]
-        for pattern in patterns_negatifs:
-            if re.search(pattern, texte_bas):
+
+        # Un négatif quelque part -> non valide
+        for n in negatifs:
+            if re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç0-9]){re.escape(n)}(?:[^a-zàâäéèêëïîôùûüç0-9]|$)", texte_bas):
                 return False, reponse
 
-        # Il faut au moins un positif explicite dans tout le texte
+        # Il faut au moins un positif explicite
         valide = any(
-            re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç]|$)", texte_bas)
+            re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç0-9]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç0-9]|$)", texte_bas)
             for p in positifs
         )
         return valide, reponse
@@ -267,8 +265,8 @@ def _snapshot_pour_kimi(mission: str, historique: list, derniere_erreur: str = "
     if derniere_erreur:
         lignes.extend(["", f"DERNIÈRE ERREUR / BLOCAGE : {derniere_erreur}"])
     lignes.append("")
-    lignes.append("Réponds 'ok' ou 'done' si le travail est correctement terminé. "
-                  "Sinon, donne 1 à 3 actions concrètes à corriger.")
+    lignes.append("Si le travail est complètement terminé ET fonctionnel, réponds UNIQUEMENT 'ok' ou 'done'. "
+                  "Si le moindre point est à corriger, dis NON et liste 1 à 3 actions concrètes.")
     return "\n".join(lignes)
 
 
@@ -329,7 +327,7 @@ def _run_cycle(
         decision = _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only=kimi_only)
 
         # Empêcher les actions inutiles sur fichiers verrouillés
-        if decision.get("action") == "write_file":
+        if decision.get("action") in ("write_file", "edit_file"):
             chemin = decision.get("args", {}).get("path", "")
             if chemin and _est_verrouille(chemin, verrou):
                 decision["pensee"] = f"{chemin} déjà validé. Je passe au suivant."
@@ -377,7 +375,7 @@ def _run_cycle(
                 if avis.get("gemma_ok") is False:
                     guidance_kimi = (
                         f"Le fichier {chemin} a été validé par DeepSeek mais Gemma voit un défaut : "
-                        f"{avis.get('gemma_raison')}. Corrige immédiatement ce fichier en utilisant write_file."
+                        f"{avis.get('gemma_raison')}. Corrige immédiatement ce fichier en utilisant edit_file."
                     )
 
         narration = _narrer(tour_abs, start_cycle, decision.get("action", "?"), resultat, avis)
