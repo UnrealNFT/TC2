@@ -7,6 +7,7 @@ import threading
 import os
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -69,6 +70,12 @@ class KimiBody(BaseModel):
     question: str
 
 
+class FileWriteBody(BaseModel):
+    path: str
+    content: str
+    workspace: Optional[str] = ""
+
+
 def _callback(tour: int, decision: dict, narration: str):
     global agent_tours
     agent_tours.append({"tour": tour, "action": decision.get("action"), "pensee": narration})
@@ -108,6 +115,28 @@ def _build_context(file_path: str, file_content: str, workspace: str) -> str:
     except Exception:
         pass
     return "\n".join(parts)
+
+
+@app.post("/files/write")
+async def file_write(body: FileWriteBody):
+    """Écrit un fichier n'importe où dans le workspace courant ou spécifié."""
+    try:
+        if body.workspace:
+            tools.initialize_root(body.workspace)
+        return {"status": "ok", "result": tools.write_file(body.path, body.content)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/files/read")
+async def file_read(body: FileWriteBody):
+    """Lit un fichier."""
+    try:
+        if body.workspace:
+            tools.initialize_root(body.workspace)
+        return {"status": "ok", "content": tools.read_file(body.path)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/ask")
