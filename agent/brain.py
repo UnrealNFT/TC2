@@ -1,62 +1,56 @@
 # pyright: reportMissingImports=false
-
 """Cerveau de l'agent TrappistCode.
 
 Architecture :
 - Gemma 4 Uncensored (12B) : cerveau principal, planifie, discute, écrit le code.
-- DeepSeek / Qwen Uncensored : relecteur critique et contrôleur de fichiers.
-- Kimi K2.7 Code (WaveSpeed) : supervisor externe, appelé tous les 10 tours
-  ou quand Gemma est perdue. Max 30 appels par session.
+- DeepSeek/Qwen Uncensored : relecteur critique et contrôleur de fichiers.
+- Kimi K2.7 Code (WaveSpeed) : supervisor externe et fallback hardware.
 
 Stratégie VRAM Ollama :
 Gemma reste en mémoire pendant la boucle de code. DeepSeek est appelé uniquement
 pour controler() : Ollama décharge Gemma, charge DeepSeek, puis Gemma est
-rechargée au tour suivant. C'est lent mais donne un vrai avis externe.
+rechargée au tour suivant.
 """
 import json, re, os, urllib.request
 import ollama
 
-# Noms exacts de ollama list. Le :latest de Gemma est obligatoire.
+# Noms exacts de ollama list.
 MODELE_CERVEAU = "satgeze/gemma4-12b-uncensored-1m:latest"
 MODELE_RELECTEUR = "hf.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF:Q4_K_M"
-
-MODELE_PLANNER = MODELE_CERVEAU
-MODELE_CODER = MODELE_CERVEAU
-MODELE_REVIEWER = MODELE_RELECTEUR
 MODELE_KIMI = "moonshotai/kimi-k2.7-code"
 
 # Actions supportées par tools.py. Gemma NE doit PAS en inventer d'autres.
-SYSTEM_CODER = """Réponds UNIQUEMENT avec un objet JSON. Rien avant, rien après. Pas de \`\`\`.
+SYSTEM_CODER = """Tu es un agent de code autonome (TrappistCode).
+A chaque tour tu DOIS répondre par UN SEUL objet JSON. Rien avant, rien après. Pas de ```.
+{
+  "pensee": "ton raisonnement court",
+  "action": "write_file|read_file|append_file|delete_file|copy_file|rename_file|move_file|exists_file|list_files|list_tree|get_context|shell|commit_push|set_root|done",
+  "args": { ... }
+}
 
-{"pensee": "court", "action": "write_file", "args": {"path": "index.html", "content": "<!doctype html>..."}}
-
-Tu codes dans le dossier déjà ouvert. Un seul outil par tour.
-N'appelle set_root que si l'objectif donne un autre chemin que celui déjà actif.
-Tu suis l'objectif. Tu n'inventes pas de pages que personne n'a demandées.
-Chaque fichier s'écrit une fois. S'il existe déjà, tu passes au suivant, ou done.
-
-Actions disponibles (tu ne dois PAS utiliser trappist_generate, il n'existe pas) :
-- write_file (path, content)
+Actions (utilise EXACTEMENT ces noms) :
+- set_root (path) : change le dossier de travail SI l'objectif en donne un autre.
+- list_files () : liste les fichiers du workspace.
+- list_tree () : arborescence complète.
+- get_context (max_files=30) : extrait un résumé du projet.
 - read_file (path)
+- write_file (path, content)
 - append_file (path, content)
 - delete_file (path)
 - copy_file (src, dst)
 - rename_file (src, dst)
 - move_file (src, dst)
 - exists_file (path)
-- list_files ()
-- list_tree ()
-- get_context (max_files)
 - shell (cmd)
 - commit_push (message)
-- set_root (path)
 - done (resume)
 
-Dossier vide : write_file tout de suite, jamais done.
-done seulement quand l'objectif est atteint.
-Pas de discussion. Pas de plan en prose. Pas de brouillon.
-Utilise get_context quand tu veux voir le projet en entier.
-Utilise commit_push tous les 5 tours ou avant un done."""
+Règles :
+- Un seul outil par tour. Pas de texte hors JSON.
+- Si le dossier est vide et l'objectif demande de créer quelque chose, fais write_file immédiatement.
+- Ne réponds done que si l'objectif est réellement atteint.
+- Commit régulièrement tous les 5 tours.
+- Utilise get_context quand tu veux voir le projet en entier."""
 
 SYSTEM_REVIEWER = """Tu es un reviewer uncensored. 2 phrases en français : est-ce que l'action a avancé l'objectif, et quelle est la prochaine correction concrète. Pas de JSON."""
 
@@ -65,18 +59,21 @@ Réponds en français, 2 à 5 phrases, comme dans une discussion.
 Uniquement la réponse finale.
 Interdit : plan, brouillon, puces, Persona, Draft, Self-correction, JSON, code."""
 
-# DeepSeek / Qwen doivent répondre dans cette forme, et dans aucune autre.
 SYSTEM_CONTROLE = """Tu vérifies un fichier déjà écrit. Tu ne le réécris pas.
 Réponds UNIQUEMENT par ce JSON :
 {"ok": true, "raison": "court", "suite": "done"}
 ok=false seulement s'il manque quelque chose d'essentiel DANS CE FICHIER, par rapport à l'objectif.
-suite = done, ou le prochain fichier à créer. Interdit de redemander le fichier qu'on te montre.
-Si le fichier est vide, contient juste un placeholder, ou n'inclut pas les imports mentionnés dans l'objectif, ok=false.
+suite = done, ou le prochain fichier à créer/modifier. Interdit de redemander le fichier qu'on te montre.
+Si le fichier est vide, placeholder, ou n'inclut pas les imports/éléments mentionnés dans l'objectif, ok=false.
 Si le fichier est suffisant pour sa part de l'objectif, ok=true. N'invente pas de défauts."""
 
+SYSTEM_RELECTURE_GEMMA = """Tu relis un fichier déjà validé par un autre modèle.
+Réponds UNIQUEMENT par ce JSON :
+{"ok": true, "raison": "court"}
+ok=false si tu vois une erreur SyntaxError, une import manquant, un return manquant, une balise mal fermée, ou une incohérence visible.
+ok=true si le fichier semble propre."""
+
 SYSTEM_KIMI_SUPERVISOR = """Tu es Kimi, supervisor externe de TrappistCode.
-On te demande de jeter un œil sur l'état du projet et de guider Gemma/DeepSeek.
-Contexte : objectif utilisateur, structure des fichiers, derniers tours de l'agent.
 Réponds en francais, 5 à 12 phrases maximum.
 Donne :
 1. Un diagnostic de la situation
@@ -86,7 +83,6 @@ Donne :
 Sois technique, percutant, sans langage de bois."""
 
 SYSTEM_KIMI_FINAL = """Tu es Kimi, superviseur final de TrappistCode.
-On te montre l'objectif utilisateur et les fichiers créés.
 Réponds en français, 4 à 8 phrases.
 Donne :
 1. Si l'objectif semble atteint
@@ -110,7 +106,7 @@ def _cle_wavespeed() -> str:
 def _chat(messages: list, num_predict: int, temperature: float, as_json: bool = False, modele: str = "") -> dict:
     """Appelle Ollama. modele vaut Gemma par défaut. Passer MODELE_REVIEWER pour DeepSeek/Qwen."""
     options = {"num_ctx": 12288, "num_predict": num_predict, "temperature": temperature}
-    base = {"model": modele or MODELE_CODER, "messages": messages, "options": options}
+    base = {"model": modele or MODELE_CERVEAU, "messages": messages, "options": options}
     essais = []
     if as_json:
         essais.append({**base, "format": "json", "think": False})
@@ -165,19 +161,30 @@ def extraire_json(texte: str) -> dict:
         data.setdefault("pensee", "")
         data.setdefault("args", {})
         return data
-    return {"pensee": "Pas de JSON", "action": "list_files", "args": {}}
+    return {"pensee": "Pas de JSON utilisable", "action": "list_files", "args": {}}
 
 
-def _coder(prompt: str) -> dict:
-    """Un tour de Gemma."""
-    messages = [
+def _coder_with_fallback(prompt: str, prior_messages: list = None) -> dict:
+    """Un tour de Gemma, avec fallback Kimi si Ollama plante."""
+    messages = prior_messages or [
         {"role": "system", "content": SYSTEM_CODER},
         {"role": "user", "content": prompt + "\n/no_think"},
     ]
-    data = extraire_json(_texte(_chat(messages, 4500, 0.2, as_json=True)))
-    if data.get("pensee") == "Pas de JSON":
-        data = extraire_json(_texte(_chat(messages, 4500, 0.1, as_json=True)))
-    return data
+    try:
+        data = extraire_json(_texte(_chat(messages, 4500, 0.2, as_json=True)))
+        if data.get("pensee") == "Pas de JSON utilisable":
+            data = extraire_json(_texte(_chat(messages, 4500, 0.1, as_json=True)))
+        return data
+    except Exception as e:
+        err = str(e).lower()
+        if "prediction aborted" in err or "token repeat" in err or "repeat limit" in err:
+            print(f"[brain] Ollama en boucle, fallback Kimi demandé : {e}")
+            return secours_kimi(prompt)
+        raise
+
+
+def _coder(prompt: str) -> dict:
+    return _coder_with_fallback(prompt)
 
 
 def decider_raw(prompt: str) -> dict:
@@ -187,20 +194,24 @@ def decider_raw(prompt: str) -> dict:
 
 def est_discussion(question: str) -> bool:
     q = question.strip().lower()
+    # un chemin Windows n'est pas une discussion
     if re.search(r"[a-z]:\\", q):
         return False
-    if any(k in q for k in (
+    mots_action = (
         "crée", "cree", "créé", "construis", "ecris", "écris", "fichier",
         "commit", "push", "github", "index.html", "modifie", "ajoute",
         "code", "dossier", "repo", "npm", "bug", "css", "html", "amelio",
         "améliore", "supprime", "deplace", "déplace", "copie", "renomme",
-    )):
+        "lis", "lire", "regarde", "analyse", "refactor", "test",
+    )
+    mots_chat = (
+        "salut", "bonjour", "yo", "hey", "coucou", "hello",
+        "comment", "pourquoi", "quoi", "que", "qui", "explique",
+        "parle-moi", "parle moi", "ton avis", "tu penses", "c'est quoi",
+    )
+    if any(w in q for w in mots_action):
         return False
-    return any(k in q for k in (
-        "que dire", "c'est quoi", "c est quoi", "qu'est-ce", "quest-ce",
-        "explique", "parle-moi", "parle moi", "ton avis", "tu penses",
-        "qui es-tu", "qui es tu",
-    ))
+    return any(w in q.split() for w in mots_chat) or len(question.strip()) < 20
 
 
 def discuter(question: str) -> str:
@@ -231,7 +242,6 @@ def planner(objectif: str, contexte: str) -> dict:
         num_predict=600,
         temperature=0.2,
         as_json=True,
-        modele=MODELE_PLANNER,
     )
     return extraire_json(_texte(r))
 
@@ -268,7 +278,12 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
     if guidance:
         prompt += f"GUIDAGE DU SUPERVISEUR KIMI :\n{guidance}\n\n"
     prompt += f"Un seul JSON. Si le dossier est vide, write_file.{lecture}"
-    data = _coder(prompt)
+
+    try:
+        data = _coder(prompt)
+    except Exception as e:
+        return secours_kimi(prompt) or {"pensee": "fallback erreur", "action": "done", "args": {"resume": f"Erreur LLM: {e}"}}
+
     vide = not contexte.strip() or contexte.strip() == "(dossier vide)"
     if vide and not historique and data.get("action") != "write_file":
         data = _coder(prompt + "\n\nInterdit de répondre done. Écris le premier fichier maintenant.")
@@ -280,20 +295,22 @@ def verifier(objectif: str, action: dict, resultat: str) -> str:
     debut = (resultat or "").lstrip()
     if debut.startswith(("OK ", "Dossier de travail", "Commit local", "Commit:")) and "Erreur" not in debut[:80]:
         return "Action réussie. Continuer vers la prochaine étape concrète."
-    r = _chat(
-        [
-            {"role": "system", "content": SYSTEM_REVIEWER},
-            {"role": "user", "content": f"Objectif : {objectif[:500]}\nAction : {action.get('action')}\nRésultat : {resultat[:800]}\n/no_think"},
-        ],
-        num_predict=120,
-        temperature=0.2,
-        modele=MODELE_REVIEWER,
-    )
-    return _texte(r) or "Résultat reçu."
+    try:
+        r = _chat(
+            [
+                {"role": "system", "content": SYSTEM_REVIEWER},
+                {"role": "user", "content": f"Objectif : {objectif[:500]}\nAction : {action.get('action')}\nRésultat : {resultat[:800]}\n/no_think"},
+            ],
+            num_predict=120,
+            temperature=0.2,
+            modele=MODELE_RELECTEUR,
+        )
+        return _texte(r) or "Résultat reçu."
+    except Exception as e:
+        return f"Reviewer indisponible ({e}). Continuer."
 
 
 def _oui(valeur) -> bool:
-    """DeepSeek écrit parfois ok comme 'true' textuel."""
     if isinstance(valeur, bool):
         return valeur
     if isinstance(valeur, str):
@@ -303,21 +320,24 @@ def _oui(valeur) -> bool:
 
 def controler(objectif: str, chemin: str, contenu: str) -> dict:
     """DeepSeek/Qwen juge le fichier. Appelé après write_file."""
-    r = _chat(
-        [
-            {"role": "system", "content": SYSTEM_CONTROLE},
-            {"role": "user", "content": (
-                f"Objectif : {objectif[:800]}\n"
-                f"Fichier : {chemin}\n"
-                f"Contenu :\n{contenu[:6000]}\n/no_think"
-            )},
-        ],
-        num_predict=250,
-        temperature=0.1,
-        as_json=True,
-        modele=MODELE_REVIEWER,
-    )
-    data = _objet_json(_texte(r))
+    try:
+        r = _chat(
+            [
+                {"role": "system", "content": SYSTEM_CONTROLE},
+                {"role": "user", "content": (
+                    f"Objectif : {objectif[:800]}\n"
+                    f"Fichier : {chemin}\n"
+                    f"Contenu :\n{contenu[:6000]}\n/no_think"
+                )},
+            ],
+            num_predict=250,
+            temperature=0.1,
+            as_json=True,
+            modele=MODELE_RELECTEUR,
+        )
+        data = _objet_json(_texte(r))
+    except Exception as e:
+        return {"ok": True, "raison": f"avis illisible ({e}), on garde le fichier", "suite": "done"}
     if "ok" not in data:
         return {"ok": True, "raison": "avis illisible, on garde le fichier", "suite": "done"}
     return {
@@ -327,25 +347,42 @@ def controler(objectif: str, chemin: str, contenu: str) -> dict:
     }
 
 
-def secours_kimi(objectif: str, historique: list, contexte: str, raison: str) -> dict:
-    """Kimi K2.7 Code, appel de secours."""
+def relire_gemma(objectif: str, chemin: str, contenu: str) -> dict:
+    """Gemma relit un fichier déjà validé par DeepSeek."""
+    try:
+        r = _chat(
+            [
+                {"role": "system", "content": SYSTEM_RELECTURE_GEMMA},
+                {"role": "user", "content": (
+                    f"Objectif : {objectif[:800]}\n"
+                    f"Fichier : {chemin}\n"
+                    f"Contenu :\n{contenu[:4000]}\n/no_think"
+                )},
+            ],
+            num_predict=250,
+            temperature=0.1,
+            as_json=True,
+        )
+        data = _objet_json(_texte(r))
+    except Exception as e:
+        return {"ok": True, "raison": f"Gemma indisponible: {e}"}
+    if "ok" not in data:
+        return {"ok": True, "raison": "avis Gemma illisible"}
+    return {"ok": _oui(data.get("ok")), "raison": str(data.get("raison", ""))[:300]}
+
+
+def secours_kimi(prompt: str) -> dict:
+    """Kimi K2.7 Code, fallback quand Ollama est bloqué."""
     cle = _cle_wavespeed()
     if not cle:
-        return {"pensee": "pas de clé", "action": "done", "args": {"resume": "Kimi non appelé : clé WaveSpeed absente du .env."}}
-    hist = "\n".join(f"- {a} => {str(r)[:250]}" for a, r in historique[-6:]) or "(début)"
+        return {"pensee": "pas de clé Kimi", "action": "done", "args": {"resume": "Kimi non appelé : clé WaveSpeed absente du .env."}}
     body = json.dumps({
         "model": MODELE_KIMI,
         "temperature": 0.2,
         "max_tokens": 4096,
         "messages": [
             {"role": "system", "content": SYSTEM_CODER},
-            {"role": "user", "content": (
-                f"Le modèle local est bloqué : {raison}\n\n"
-                f"OBJECTIF : {objectif[:1500]}\n\n"
-                f"FICHIERS :\n{contexte[:1500]}\n\n"
-                f"HISTORIQUE :\n{hist}\n\n"
-                "Donne la prochaine action. Un seul JSON."
-            )},
+            {"role": "user", "content": prompt},
         ],
     }).encode()
     req = urllib.request.Request(
@@ -454,6 +491,7 @@ class chat_classifier:
             "crée", "cree", "créé", "construis", "ecris", "écris", "code",
             "modifie", "ajoute", "supprime", "fichier", "dossier", "html",
             "css", "js", "commit", "push", "bug", "erreur", "amelio", "améliore",
+            "lis", "lire", "analyse", "refactor", "test",
         )
         mots_chat = (
             "salut", "bonjour", "yo", "hey", "comment", "pourquoi", "quoi",
