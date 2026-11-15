@@ -195,6 +195,22 @@ def _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only: bool 
         raise
 
 
+def _page_prete() -> bool:
+    """Vrai si index.html est déjà une vraie page, pas un brouillon."""
+    if not tools.exists_file("index.html"):
+        return False
+    contenu = tools.read_file("index.html") or ""
+    bas = contenu.lower()
+    return len(contenu.strip()) >= 400 and "<body" in bas and "</html>" in bas
+
+
+def _tour_en_lecture(historique: list) -> bool:
+    if len(historique) < 3:
+        return False
+    recent = [a.get("action") for a, _ in historique[-4:]]
+    return all(a in ("read_file", "list_files", "list_tree", "get_context") for a in recent)
+
+
 def _detecter_boucle(historique: list) -> str:
     """Renvoie un message si le modèle tourne en rond sur list_files/read_file/shell."""
     if len(historique) < 4:
@@ -213,7 +229,8 @@ def _detecter_boucle(historique: list) -> str:
                 "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
                 "Tu dois AGIR maintenant avec edit_file ou write_file. "
                 f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
-                "Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string)."
+                "Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string). "
+                "Interdit de relire un fichier déjà lu. Si la page est déjà bonne, action done."
             )
 
     # Boucle shell répétée avec erreur
@@ -340,7 +357,14 @@ def _run_cycle(
         if anti_boucle:
             prompt_sup += anti_boucle
 
-        decision = _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only=kimi_only)
+        if _tour_en_lecture(historique) and _page_prete():
+            decision = {
+                "pensee": "La page est déjà construite. Inutile de la relire.",
+                "action": "done",
+                "args": {"resume": "Site déjà en place. J'arrête de relire index.html."},
+            }
+        else:
+            decision = _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only=kimi_only)
 
         # Empêcher les actions inutiles sur fichiers verrouillés
         if decision.get("action") in ("write_file", "edit_file"):
@@ -350,8 +374,8 @@ def _run_cycle(
                 decision["action"] = "list_files"
                 decision["args"] = {}
 
-        # Bloquer un done prématuré
-        if decision.get("action") == "done":
+        # Bloquer un done prématuré, sauf si la page est déjà une vraie page
+        if decision.get("action") == "done" and not _page_prete():
             if not _test_reussi(historique):
                 decision["pensee"] = "done refusé: aucun test réussi."
                 decision["action"] = "test_project"

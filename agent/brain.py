@@ -315,19 +315,14 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
             nom = nom.strip()
             if nom and not nom.endswith("/") and any(nom.lower().endswith(ext) for ext in (".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
                 fichiers.append(nom)
-        action_forcee = "read_file"
-        cible = fichiers[0] if fichiers else ""
-        if actions_recentes.count("list_files") >= 2:
-            action_forcee = "get_context" if not fichiers else "read_file"
         anti_boucle = (
             "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
             f"Tu dois AGIR maintenant avec edit_file ou write_file. "
             f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
             f"Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string). "
-            "Si l'objectif est atteint, appelle done."
+            "Si l'objectif est atteint, appelle done. "
+            "Interdit de répondre read_file ou list_files."
         )
-        if cible:
-            anti_boucle += f"\nExemple : {{\"action\": \"read_file\", \"args\": {{\"path\": \"{cible}\"}}}} puis edit_file."
 
     prompt = (
         f"OBJECTIF : {objectif}\n\n"
@@ -361,15 +356,14 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
     if vide and not historique and data.get("action") != "write_file":
         data = _coder(prompt + "\n\nInterdit de répondre done. Écris le premier fichier maintenant avec write_file.")
 
-    # Si on détecte une action répétitive inutile, forcer edit_file ou read_file
-    if data.get("action") in ("list_files", "list_tree") and actions_recentes.count("list_files") >= 2:
-        fichiers = []
-        for nom in contexte.splitlines()[:25]:
-            nom = nom.strip()
-            if nom and not nom.endswith("/") and any(nom.lower().endswith(ext) for ext in (".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
-                fichiers.append(nom)
-        if fichiers:
-            return {"pensee": "Forçage d'action concrète après listes répétées.", "action": "read_file", "args": {"path": fichiers[0]}}
+    if data.get("action") in ("list_files", "list_tree", "read_file", "get_context") and (
+        actions_recentes.count("list_files") >= 2 or actions_recentes.count("read_file") >= 2
+    ):
+        return {
+            "pensee": "Assez lu. Je n'envoie plus de lecture.",
+            "action": "done",
+            "args": {"resume": "Lectures déjà faites. Je m'arrête au lieu de relire les mêmes fichiers."},
+        }
 
     # Sécurité : interdire les fichiers .py sur un objectif web
     if data.get("action") in ("write_file", "append_file", "delete_file", "copy_file", "rename_file", "move_file"):
