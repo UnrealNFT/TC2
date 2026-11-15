@@ -1,204 +1,145 @@
-# pyright: reportMissingImports=false
-"""Outils basiques de l'agent TrappistCode."""
+"""Outils basiques pour l'agent : fichiers, shell, git, contexte."""
 import os
-import shutil
+import re
 import subprocess
 from pathlib import Path
 
 ROOT = os.getcwd()
-ROOT_INITIAL = ROOT
 
 
 def initialize_root(path: str):
-    global ROOT, ROOT_INITIAL
+    """Définit le workspace sur lequel l'agent travaille."""
+    global ROOT
     ROOT = os.path.abspath(path)
-    ROOT_INITIAL = ROOT
     os.makedirs(ROOT, exist_ok=True)
 
 
-def _rel(path: str) -> str:
-    if os.path.isabs(path):
-        path = os.path.relpath(path, ROOT).replace("\\", "/")
-    path = path.lstrip("/")
-    return path
-
-
-def _abs(path: str) -> str:
-    return os.path.abspath(os.path.join(ROOT, _rel(path)))
-
-
-def _safe(path: str) -> str:
-    abspath = _abs(path)
-    if not abspath.startswith(ROOT):
-        raise ValueError(f"chemin interdit: {path}")
-    return abspath
-
-
-# ============== Outils fichiers ==============
-
-def write_file(path: str, content: str) -> str:
-    p = _safe(path)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(content)
-    rel = _rel(p)
-    return f"OK {rel} ({len(content)} car.)"
-
-
-def append_file(path: str, content: str) -> str:
-    p = _safe(path)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    with open(p, "a", encoding="utf-8") as f:
-        f.write(content)
-    return f"OK append {len(content)} car."
-
-
-def read_file(path: str) -> str:
-    p = _safe(path)
-    if not os.path.isfile(p):
-        return ""
-    with open(p, "r", encoding="utf-8", errors="ignore") as f:
-        return f.read()
+def _path(relative: str) -> str:
+    if os.path.isabs(relative):
+        return relative
+    return os.path.normpath(os.path.join(ROOT, relative))
 
 
 def exists_file(path: str) -> bool:
-    return os.path.isfile(_safe(path))
+    return os.path.isfile(_path(path))
 
 
-def delete_file(path: str) -> str:
-    p = _safe(path)
-    if os.path.isfile(p):
-        os.remove(p)
-        return f"OK supprimé {_rel(p)}"
-    return "OK (n'existait pas)"
-
-
-def copy_file(src: str, dst: str) -> str:
-    s = _safe(src)
-    d = _safe(dst)
-    os.makedirs(os.path.dirname(d), exist_ok=True)
-    shutil.copy2(s, d)
-    return f"OK copie {_rel(s)} -> {_rel(d)}"
-
-
-def move_file(src: str, dst: str) -> str:
-    s = _safe(src)
-    d = _safe(dst)
-    os.makedirs(os.path.dirname(d), exist_ok=True)
-    shutil.move(s, d)
-    return f"OK déplacement {_rel(s)} -> {_rel(d)}"
-
-
-def rename_file(src: str, dst: str) -> str:
-    return move_file(src, dst)
-
-
-def shell(cmd: str) -> str:
+def read_file(path: str) -> str:
+    full = _path(path)
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="ignore",
-            cwd=ROOT,
-        )
-        out = (result.stdout or "") + ("\n" if result.stderr else "") + (result.stderr or "")
-        return out.strip() or "OK"
+        with open(full, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return f"ERREUR LECTURE {path}: {e}"
+
+
+def write_file(path: str, content: str) -> str:
+    full = _path(path)
+    os.makedirs(os.path.dirname(full) or ROOT, exist_ok=True)
+    if not isinstance(content, str):
+        content = str(content)
+    with open(full, "w", encoding="utf-8") as f:
+        f.write(content)
+    return f"ÉCRIT: {path}"
+
+
+def mkdir(path: str) -> None:
+    os.makedirs(_path(path), exist_ok=True)
+
+
+def copy_file(src: str, dst: str) -> None:
+    import shutil
+    shutil.copy2(_path(src), _path(dst))
+
+
+def delete(path: str) -> str:
+    full = _path(path)
+    if os.path.isfile(full):
+        os.remove(full)
+    elif os.path.isdir(full):
+        import shutil
+        shutil.rmtree(full)
+    return f"SUPPRIMÉ: {path}"
+
+
+def list_files(path: str = "") -> str:
+    full = _path(path)
+    if not os.path.isdir(full):
+        return f"ERREUR: dossier introuvable {path}"
+    try:
+        files = sorted(os.listdir(full))
+        return "\n".join(files) or "(dossier vide)"
     except Exception as e:
         return f"ERREUR: {e}"
 
 
-def git(args: str) -> str:
-    if shutil.which("git") is None:
-        return "ERREUR: git non disponible"
+def list_tree(path: str = "") -> str:
+    full = _path(path)
+    lines = []
+    if os.path.isdir(full):
+        for root, dirs, files in os.walk(full):
+            level = root.replace(full, "").count(os.sep)
+            indent = "  " * level
+            lines.append(f"{indent}{os.path.basename(root)}/")
+            for f in files:
+                lines.append(f"{indent}  {f}")
+    return "\n".join(lines) or "(vide)"
+
+
+def get_context(max_files: int = 30) -> str:
+    """Récupère le contenu des fichiers sources pour donner du contexte au LLM."""
+    files = []
+    for root, _, filenames in os.walk(ROOT):
+        for f in filenames:
+            if f.lower().endswith((".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
+                files.append(os.path.join(root, f))
+    files.sort(key=lambda x: os.path.getsize(x))
+    context = []
+    for full in files[:max_files]:
+        rel = os.path.relpath(full, ROOT).replace("\\", "/")
+        try:
+            with open(full, "r", encoding="utf-8") as f:
+                content = f.read()
+            context.append(f"--- {rel} ---\n{content[:2000]}")
+        except Exception:
+            pass
+    return "\n\n".join(context)
+
+
+def shell(command: str, timeout: int = 60) -> str:
     try:
-        result = subprocess.run(
-            ["git"] + (args.split() if isinstance(args, str) else list(args)),
+        proc = subprocess.run(
+            command,
+            shell=True,
+            cwd=ROOT,
             capture_output=True,
             text=True,
-            encoding="utf-8",
-            errors="ignore",
-            cwd=ROOT,
+            timeout=timeout,
         )
-        out = (result.stdout or "") + (result.stderr or "")
-        return out.strip() or "OK"
+        out = proc.stdout.strip()
+        err = proc.stderr.strip()
+        if proc.returncode != 0:
+            return f"ERREUR ({proc.returncode}): {err or out}"
+        return out or "OK"
+    except subprocess.TimeoutExpired:
+        return f"ERREUR: timeout après {timeout}s"
     except Exception as e:
-        return f"ERREUR git: {e}"
+        return f"ERREUR: {e}"
+
+
+def git_status() -> dict:
+    return shell("git status --short")
+
+
+def _git(cmd: str) -> str:
+    return shell(f"git {cmd}")
 
 
 def commit_push(message: str) -> str:
-    git("add -A")
-    r = git(f'commit -m "{message}"')
-    if "nothing to commit" in r.lower():
-        return "Rien à commiter"
-    git("push")
-    return r.strip() or "OK commit+push"
-
-
-# ============== Contexte ==============
-
-def list_files(path: str = ".") -> str:
-    base = _abs(path)
-    if not os.path.isdir(base):
-        return "(dossier vide)"
-    fichiers = []
-    for item in sorted(os.listdir(base)):
-        if item.startswith("."):
-            continue
-        full = os.path.join(base, item)
-        if os.path.isfile(full):
-            fichiers.append(item)
-        else:
-            fichiers.append(item + "/")
-    return "\n".join(fichiers) or "(dossier vide)"
-
-
-def list_tree(path: str = ".") -> str:
-    base = _abs(path)
-    if not os.path.isdir(base):
-        return "(dossier vide)"
-    lignes = []
-    for racine, dirs, files in os.walk(base):
-        dirs[:] = [d for d in sorted(dirs) if not d.startswith(".")]
-        rel = os.path.relpath(racine, base).replace("\\", "/")
-        prefix = "" if rel == "." else rel + "/"
-        for f in sorted(files):
-            if f.startswith("."):
-                continue
-            lignes.append(prefix + f)
-    return "\n".join(lignes) or "(dossier vide)"
-
-
-def get_context(max_files: int = 20) -> str:
-    tree = list_tree()
-    lignes = ["STRUCTURE:", tree]
-    fichiers = tree.splitlines()[:max_files]
-    for f in fichiers:
-        p = _safe(f)
-        if os.path.isfile(p):
-            lignes.append(f"\n--- {f} ---")
-            lignes.append(Path(p).read_text(encoding="utf-8", errors="ignore")[:1200])
-    return "\n".join(lignes)
-
-
-# ============== Outils supportés ==============
-
-TOOLS = {
-    "write_file": write_file,
-    "append_file": append_file,
-    "read_file": read_file,
-    "exists_file": exists_file,
-    "delete_file": delete_file,
-    "copy_file": copy_file,
-    "move_file": move_file,
-    "rename_file": rename_file,
-    "shell": shell,
-    "git": git,
-    "commit_push": commit_push,
-    "list_files": list_files,
-    "list_tree": list_tree,
-    "get_context": get_context,
-    "set_root": initialize_root,
-}
+    status = shell("git status --short")
+    if not status.strip():
+        return "RIEN À COMMITTER"
+    shell("git add .")
+    result = shell(f'git commit -m "{message}"')
+    shell("git push")
+    return result

@@ -41,7 +41,7 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
         chemin = avis.get("suite", "fichier") if avis else "fichier"
         if avis:
             return f"✅ Fichier validé par DeepSeek. Prochaine étape : {chemin}"
-        return f"✏️ Écriture du fichier..."
+        return "✏️ Écriture du fichier..."
     if action == "read_file":
         lignes = len(str(resultat).splitlines())
         return f"👁️ Lecture ({lignes} lignes)."
@@ -54,7 +54,7 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
     if action == "commit_push":
         return "💾 Commit/push effectué."
     if action == "shell":
-        return f"⚙️ Commande exécutée."
+        return "⚙️ Commande exécutée."
     if action == "set_root":
         return "📂 Dossier de travail défini."
     return f"▶️ Action : {action}"
@@ -65,6 +65,51 @@ CONTINU_DESCRIPTIONS = {
     "game": "J'améliore le jeu : score, niveaux, visuels, bugs.",
     "app": "J'ajoute des fonctionnalités et je corrige les défauts.",
 }
+
+
+def _verifier_done_valide(objectif: str, historique: list) -> bool:
+    """Empêche un done prématuré si des fichiers vitaux semblent manquants ou vides."""
+    ecrits = set()
+    for action, _ in historique:
+        if action.get("action") == "write_file":
+            ecrits.add(action.get("args", {}).get("path", "").lower())
+
+    # Si l'objectif mentionne HTML/web, on exige index.html non vide
+    obj = objectif.lower()
+    if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
+        if "index.html" not in ecrits:
+            return False
+        contenu = tools.read_file("index.html")
+        if not contenu or len(contenu.strip()) < 50:
+            return False
+
+    return True
+
+
+def _relire_finale(objectif: str, max_fix: int = 3) -> int:
+    """Relecture finale automatique : lit les fichiers et corrige si vide ou cassé."""
+    fichiers = []
+    for nom in tools.list_tree().splitlines():
+        nom = nom.strip()
+        if nom and not nom.endswith("/") and any(nom.lower().endswith(ext) for ext in (".html", ".css", ".js", ".ts", ".tsx", ".py")):
+            fichiers.append(nom)
+
+    fixes = 0
+    for chemin in fichiers:
+        contenu = tools.read_file(chemin)
+        if not contenu or len(contenu.strip()) < 10:
+            action = brain.decider(
+                objectif,
+                [],
+                tools.get_context(max_files=10),
+                guidance=f"Le fichier {chemin} est vide ou très court. Réécris-le correctement.",
+            )
+            if action.get("action") == "write_file":
+                _executer_action(action)
+                fixes += 1
+                if fixes >= max_fix:
+                    break
+    return fixes
 
 
 def _run_cycle(
@@ -108,8 +153,14 @@ def _run_cycle(
         if decision.get("action") == "write_file":
             chemin = decision.get("args", {}).get("path", "")
             if chemin and _est_verrouille(chemin, verrou):
-                # Forcer une autre action
                 decision["pensee"] = f"{chemin} déjà validé. Je passe au suivant."
+                decision["action"] = "list_files"
+                decision["args"] = {}
+
+        # Bloquer un done prématuré
+        if decision.get("action") == "done":
+            if not _verifier_done_valide(objectif, historique):
+                decision["pensee"] = "Travail incomplet détecté. Je continue plutôt que de terminer."
                 decision["action"] = "list_files"
                 decision["args"] = {}
 
@@ -136,7 +187,6 @@ def _run_cycle(
                 avis = brain.controler(objectif, chemin, contenu)
                 _verrouiller(chemin, verrou)
                 suite = avis.get("suite", "done")
-                # Si DeepSeek propose de réécrire le même fichier, on force autre chose
                 if suite.lower() == chemin.lower():
                     suite = ""
 
@@ -204,6 +254,10 @@ def boucle(
             tour_courant = dernier_tour + 1
 
     # Relecture finale optionnelle
+    fixes = _relire_finale(objectif)
+    if fixes:
+        _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
+
     fichiers = []
     for nom in tools.list_tree().splitlines():
         if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
