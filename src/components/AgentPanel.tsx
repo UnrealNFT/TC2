@@ -1,24 +1,4 @@
-  const startPoll = () => {
-    stopPoll()
-    pollRef.current = setInterval(async () => {
-      try {
-        const { data } = await axios.get<AgentStatus>(STATUS_URL, { timeout: 5000 })
-        const last = data.tours && data.tours.length > 0 ? data.tours[data.tours.length - 1] : null
-        const cycle = last?.cycle ?? 1
-        const tour = last?.tour ?? data.tours?.length ?? 0
-        setTourCount(tour)
-        setRunning(data.running)
-        if (last && last.pensee && last.pensee !== lastSeenPensee.current) {
-          lastSeenPensee.current = last.pensee
-          push({ role: 'system', text: `Cycle ${cycle} — Tour ${tour} : ${last.pensee}` })
-        } else if (last) {
-          const line = last.pensee || last.action || '...'
-          updateLast('system', { text: `Cycle ${cycle} — Tour ${tour} : ${line}`, meta: { status: data.running ? 'running' : 'done' } })
-        }
-        if (!data.running) {
-          stopPoll()
-          setLoading(false)
-        }
-      } catch { /* ignore */ }
-    }, 1000)
-  }
+  const cancelRef = useRef(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const endRef = useRef<HTMLDivElement>(null)
+  const lastSeenPensee = useRef<string>('')
