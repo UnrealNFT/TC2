@@ -139,6 +139,27 @@ def _essai_decision(objectif, historique, contexte, prompt_sup):
         raise
 
 
+def _detecter_boucle(historique: list) -> str:
+    """Renvoie un message si le modèle tourne en rond sur list_files/read_file."""
+    if len(historique) < 4:
+        return ""
+    recent = historique[-6:]
+    actions = [a.get("action") for a, _ in recent]
+    # Boucle list_files / read_file répétés
+    if actions.count("list_files") >= 4 or actions.count("read_file") >= 4 or ' '.join(actions).count("list_files list_files list_files") > 0:
+        fichiers = []
+        for nom in tools.list_tree().splitlines()[:20]:
+            if nom.strip() and not nom.endswith("/"):
+                fichiers.append(nom.strip())
+        if fichiers:
+            return (
+                "\n\n⚠️ TU TOURNES EN ROND. Arrête list_files/read_file. "
+                "Choisis immédiatement une action concrète : améliorer un fichier existant avec write_file, "
+                "ajouter un nouveau fichier, ou shell/npm. Fichiers disponibles : " + ", ".join(fichiers)
+            )
+    return ""
+
+
 def _run_cycle(
     objectif: str,
     historique: list,
@@ -158,12 +179,12 @@ def _run_cycle(
 
         contexte = tools.get_context(max_files=30)
 
-        # Kimi supervisor aux tours 10, 20, 30...
-        if tour_in_cycle == CYCLE_SIZE and tour_abs > 1:
+        # Kimi supervisor exactement aux tours 10, 20, 30...
+        if tour_abs % CYCLE_SIZE == 0 and tour_abs > 0:
             gui = brain.kimi_supervise(tour_abs, objectif, historique, contexte)
             if gui:
                 guidance_kimi = gui
-                _callback_safety(callback, tour_abs, {"action": "kimi", "args": {}}, "🌙 Kimi supervisor joint au prochain tour.")
+                _callback_safety(callback, tour_abs, {"action": "kimi", "args": {}}, "🌙 Kimi supervisor appelé. Intègre son guidage maintenant.")
 
         prompt_sup = ""
         if continu:
@@ -173,6 +194,12 @@ def _run_cycle(
             )
         if guidance_kimi:
             prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
+            guidance_kimi = ""  # consommé immédiatement
+
+        # Détection anti-boucle
+        anti_boucle = _detecter_boucle(historique)
+        if anti_boucle:
+            prompt_sup += anti_boucle
 
         decision = _essai_decision(objectif, historique, contexte, prompt_sup)
 
