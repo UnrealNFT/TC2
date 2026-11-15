@@ -91,6 +91,18 @@ def _cycle(tour: int) -> int:
     return (tour - 1) // CYCLE_LENGTH + 1
 
 
+def _resume(historique: list, objectif: str) -> str:
+    """Construit un résumé compréhensible des derniers tours."""
+    if not historique:
+        return "Aucune action réalisée."
+    lignes = []
+    for a, r in historique[-12:]:
+        action = a.get("action", "?")
+        chemin = action.get("args", {}).get("path", "") if isinstance(a, dict) else ""
+        lignes.append(f"- {action} {chemin}")
+    return "Actions récentes :\n" + "\n".join(lignes)
+
+
 def boucle(objectif: str, max_tours: int = 20, commit_chaque: int = 5,
            callback=None, continu: bool = False):
     suite = ""
@@ -102,15 +114,27 @@ def boucle(objectif: str, max_tours: int = 20, commit_chaque: int = 5,
     for tour in range(1, max_tours + 1):
         cycle = _cycle(tour)
         contexte = tools.get_context(max_files=12)
-        etat = "Continuer" if continu else "Planifier"
-        plan = brain.planifier(objectif, contexte, historique, suite, etat)
+        guidance = ""
+
+        # Revue Kimi à la fin de chaque cycle complet (10 tours)
+        if tour > 1 and tour % CYCLE_LENGTH == 1:
+            try:
+                guidance = brain.kimi_supervise(tour, objectif, historique, contexte)
+                if guidance and callback:
+                    callback(tour, {"action": "kimi", "args": {}}, guidance)
+                _log({"tour": tour, "cycle": cycle, "action": "kimi", "pensee": f"🌙 Kimi supervise le cycle précédent : {guidance[:200]}"})
+            except Exception as e:
+                print(f"[kimi_supervise] {e}")
+
+        plan = brain.decider(objectif, historique, contexte, guidance)
         action = plan.get("action", "done")
         args = plan.get("args", {})
 
         if action in ("done", "terminé", "termine", "rien"):
+            narration = f"🏁 Objectif terminé : {plan.get('args', {}).get('resume', '')}"
             if callback:
-                callback(tour, {"action": "done", "args": {}}, "objectif atteint")
-            _log({"tour": tour, "cycle": cycle, "action": "done", "pensee": "objectif atteint"})
+                callback(tour, {"action": "done", "args": plan.get("args", {})}, narration)
+            _log({"tour": tour, "cycle": cycle, "action": "done", "pensee": narration})
             break
 
         try:
@@ -129,7 +153,7 @@ def boucle(objectif: str, max_tours: int = 20, commit_chaque: int = 5,
         _log({"tour": tour, "cycle": cycle, "action": action, "args": args,
               "resultat": str(resultat)[:300], "pensee": narration})
 
-        # Étape DeepSeek de contrôle après chaque write_file
+        # DeepSeek contrôle après chaque write_file
         if action == "write_file" and str(resultat).startswith("OK"):
             chemin = _chemin({"action": action, "args": args})
             try:
@@ -177,17 +201,6 @@ def boucle(objectif: str, max_tours: int = 20, commit_chaque: int = 5,
             except Exception:
                 pass
 
-        # Revue Kimi tous les 10 tours
-        if tour % CYCLE_LENGTH == 0:
-            try:
-                from .kimi import review_cycle
-                resume = review_cycle(historique[-10:], objectif)
-                if callback:
-                    callback(tour, {"action": "kimi", "args": {}}, resume)
-                _log({"tour": tour, "cycle": cycle, "action": "kimi", "pensee": resume})
-            except Exception as e:
-                print(f"[kimi cycle] {e}")
-
         # Anti-done frauduleux
         if str(resultat).lower().startswith(("déjà", "deja", "rien", "pas besoin", "terminé", "termine", "done")):
             done_refuses += 1
@@ -199,12 +212,24 @@ def boucle(objectif: str, max_tours: int = 20, commit_chaque: int = 5,
 
         time.sleep(0.2)
 
-    # Revue finale
+    # Relecture finale
     try:
         final_tree = tools.list_tree()
-        rapport = brain.relecture_finale(objectif, final_tree)
+        fichiers_recents = []
+        for item in historique[-20:]:
+            if item.get("action") == "write_file":
+                chemin = item.get("args", {}).get("path", "")
+                try:
+                    contenu = tools.read_file(chemin)
+                    fichiers_recents.append(f"--- {chemin} ---\n{contenu[:1200]}")
+                except Exception:
+                    pass
+        fichiers_bloc = f"STRUCTURE :\n{final_tree}\n\nFICHIERS :\n" + "\n\n".join(fichiers_recents[-5:])
+        rapport = brain.kimi_final_review(objectif, fichiers_bloc)
+        if not rapport:
+            rapport = _resume(historique, objectif)
         if callback:
             callback(0, {"action": "final", "args": {}}, rapport)
-        _log({"tour": 0, "cycle": _cycle(max_tours), "action": "final", "pensee": rapport})
+        _log({"tour": 0, "cycle": _cycle(max_tours), "action": "final", "pensee": f"✅ Rapport final : {rapport[:300]}"})
     except Exception as e:
         print(f"[relecture finale] {e}")
