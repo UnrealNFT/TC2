@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { requireBase } from '../lib/workspace.js'
 
 const router = Router()
 
@@ -29,21 +30,7 @@ function getMime(filePath) {
   return MIME[ext] || 'application/octet-stream'
 }
 
-function decodeBase(raw) {
-  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
-  let s = typeof raw === 'string' ? raw : String(raw)
-  try { s = decodeURIComponent(s) } catch { /* ignore */ }
-  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
-}
-
-function resolveBase(req) {
-  return decodeBase(req.query?.base)
-}
-
 function normalizeHtmlPaths(html, baseHref) {
-  // Convertit les chemins absolus à la racine (/style.css) en relatifs au preview
-  // sans toucher aux URLs externes, data:, #, etc.
   if (!html) return html
   const base = baseHref.endsWith('/') ? baseHref : baseHref + '/'
 
@@ -64,7 +51,8 @@ function normalizeHtmlPaths(html, baseHref) {
 
 router.get('/*', async (req, res) => {
   try {
-    const base = resolveBase(req)
+    const base = requireBase(req, res)
+    if (!base) return
     let target = req.path.startsWith('/') ? req.path.slice(1) : req.path
     if (!target || target === '') {
       target = 'index.html'
@@ -77,7 +65,6 @@ router.get('/*', async (req, res) => {
     const ext = path.extname(filePath).toLowerCase()
     const content = await fs.readFile(filePath)
 
-    // Pour les fichiers HTML, on normalise les liens absolus /xxx
     if (ext === '.html' || ext === '.htm') {
       const html = content.toString('utf-8')
       const normalized = normalizeHtmlPaths(html, '/api/preview/')
