@@ -70,13 +70,15 @@ def move_file(src: str, dst: str) -> str:
     return rename_file(src, dst)
 
 
-def mkdir(path: str) -> None:
+def mkdir(path: str) -> str:
     os.makedirs(_path(path), exist_ok=True)
+    return f"CRÉÉ: {path}"
 
 
-def copy_file(src: str, dst: str) -> None:
+def copy_file(src: str, dst: str) -> str:
     import shutil
     shutil.copy2(_path(src), _path(dst))
+    return f"COPIÉ: {src} -> {dst}"
 
 
 def delete(path: str) -> str:
@@ -154,12 +156,12 @@ def shell(command: str, timeout: int = 60) -> str:
         return f"ERREUR: {e}"
 
 
-def git_status() -> dict:
+def git_status() -> str:
     return shell("git status --short")
 
 
-def _git(cmd: str) -> str:
-    return shell(f"git {cmd}")
+def _git(args: str) -> str:
+    return shell(f"git {args}")
 
 
 def commit_push(message: str) -> str:
@@ -179,14 +181,17 @@ TOOLS: dict[str, Callable] = {
     "read_file": read_file,
     "append_file": append_file,
     "delete_file": delete_file,
+    "delete": delete,
     "copy_file": copy_file,
     "rename_file": rename_file,
     "move_file": move_file,
     "exists_file": exists_file,
+    "mkdir": mkdir,
     "list_files": list_files,
     "list_tree": list_tree,
     "get_context": get_context,
     "shell": shell,
     "git_status": git_status,
+    "git": _git,
     "commit_push": commit_push,
 }
