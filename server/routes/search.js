@@ -2,29 +2,9 @@ import { Router } from 'express'
 import axios from 'axios'
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { requireBase } from '../lib/workspace.js'
 
 const router = Router()
-
-function decodeBase(raw) {
-  if (!raw) return process.env.TRAPPIST_WORKSPACE || process.cwd()
-  let s = typeof raw === 'string' ? raw : String(raw)
-  try { s = decodeURIComponent(s) } catch { /* ignore */ }
-  if (process.platform === 'win32') s = s.replace(/\//g, '\\')
-  return path.resolve(s)
-}
-
-function resolveBase(req) {
-  const raw = req.body?.base ?? req.query?.base
-  return decodeBase(raw)
-}
-
-function isInside(base, target) {
-  const resolved = path.resolve(base, target || '')
-  if (process.platform === 'win32') {
-    return resolved.toLowerCase().startsWith(base.toLowerCase() + '\\') || resolved.toLowerCase() === base.toLowerCase()
-  }
-  return resolved.startsWith(base)
-}
 
 async function* walk(dir, base) {
   const entries = await fs.readdir(dir, { withFileTypes: true })
@@ -42,7 +22,8 @@ async function* walk(dir, base) {
 
 router.post('/workspace', async (req, res) => {
   try {
-    const base = resolveBase(req)
+    const base = requireBase(req, res)
+    if (!base) return
     const query = (req.body.query || req.query.q || '').trim()
     if (!query) return res.status(400).json({ error: 'query required' })
 
