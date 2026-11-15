@@ -11,10 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from collections import deque
 
+load_dotenv()
+
+# Fixer le workspace AVANT d'importer l'agent, car ROOT_INITIAL est figé à l'import
+os.environ.setdefault("AGENT_ROOT", os.environ.get("TRAPPIST_WORKSPACE", os.getcwd()))
+
 from agent import loop as agent_loop
 from agent import tools
-
-load_dotenv()
 
 app = FastAPI()
 app.add_middleware(
@@ -59,6 +62,8 @@ def _set_workspace(path: str = ""):
     target = path or os.environ.get("TRAPPIST_WORKSPACE", os.getcwd())
     target = os.path.abspath(target)
     os.makedirs(target, exist_ok=True)
+    os.environ["AGENT_ROOT"] = target
+    os.environ["TRAPPIST_WORKSPACE"] = target
     tools.set_root(target)
 
 
