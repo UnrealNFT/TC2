@@ -1,5 +1,5 @@
 # pyright: reportMissingImports=false
-"""Boucle principale de l'agent : cycles, DeepSeek, Kimi, narration."""
+"""Boucle principale de l'agent : cycles, DeepSeek, Gemma, Kimi, narration."""
 import json
 import os
 from typing import Callable
@@ -38,9 +38,11 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
     if action == "done":
         return "🏁 Mission terminée."
     if action == "write_file":
-        chemin = avis.get("suite", "fichier") if avis else "fichier"
         if avis:
-            return f"✅ Fichier validé par DeepSeek. Prochaine étape : {chemin}"
+            suite = avis.get("suite", "fichier")
+            if avis.get("gemma_ok") is False:
+                return f"🛠️ DeepSeek OK, Gemma voit un défaut : {avis.get('gemma_raison', 'relire')}. Suite : {suite}"
+            return f"✅ Fichier validé (DeepSeek + Gemma). Prochaine étape : {suite}"
         return "✏️ Écriture du fichier..."
     if action == "read_file":
         lignes = len(str(resultat).splitlines())
@@ -57,6 +59,8 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
         return "⚙️ Commande exécutée."
     if action == "set_root":
         return "📂 Dossier de travail défini."
+    if action == "kimi":
+        return "🌙 Supervisor Kimi appelé."
     return f"▶️ Action : {action}"
 
 
@@ -74,7 +78,6 @@ def _verifier_done_valide(objectif: str, historique: list) -> bool:
         if action.get("action") == "write_file":
             ecrits.add(action.get("args", {}).get("path", "").lower())
 
-    # Si l'objectif mentionne HTML/web, on exige index.html non vide
     obj = objectif.lower()
     if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
         if "index.html" not in ecrits:
@@ -112,6 +115,30 @@ def _relire_finale(objectif: str, max_fix: int = 3) -> int:
     return fixes
 
 
+def _callback_safety(callback, tour, decision, narration):
+    if callback:
+        try:
+            callback(tour, decision, narration)
+        except Exception as e:
+            print(f"[callback error] {e}")
+
+
+def _essai_decision(objectif, historique, contexte, prompt_sup):
+    try:
+        return brain.decider(objectif, historique, contexte, guidance=prompt_sup)
+    except Exception as e:
+        err = str(e).lower()
+        if "prediction aborted" in err or "token repeat" in err or "repeat limit" in err or "context length" in err:
+            print(f"[loop] Ollama ko, fallback Kimi : {e}")
+            fallback = brain.secours_kimi(
+                f"OBJECTIF : {objectif}\n\nFICHIERS :\n{contexte[:1800]}\n\n"
+                f"Ollama est bloqué. Donne la prochaine action JSON."
+            )
+            fallback["pensee"] = "[Kimi fallback] " + fallback.get("pensee", "")
+            return fallback
+        raise
+
+
 def _run_cycle(
     objectif: str,
     historique: list,
@@ -136,8 +163,8 @@ def _run_cycle(
             gui = brain.kimi_supervise(tour_abs, objectif, historique, contexte)
             if gui:
                 guidance_kimi = gui
+                _callback_safety(callback, tour_abs, {"action": "kimi", "args": {}}, "🌙 Kimi supervisor joint au prochain tour.")
 
-        # Guidance supplémentaire en mode continu
         prompt_sup = ""
         if continu:
             prompt_sup = (
@@ -147,7 +174,7 @@ def _run_cycle(
         if guidance_kimi:
             prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
 
-        decision = brain.decider(objectif, historique, contexte, guidance=prompt_sup)
+        decision = _essai_decision(objectif, historique, contexte, prompt_sup)
 
         # Empêcher les actions inutiles sur fichiers verrouillés
         if decision.get("action") == "write_file":
@@ -177,7 +204,7 @@ def _run_cycle(
                     except Exception:
                         pass
 
-        # Contrôle DeepSeek après un write_file
+        # Double contrôle après un write_file : DeepSeek puis Gemma
         avis = None
         suite = ""
         if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR"):
@@ -185,10 +212,21 @@ def _run_cycle(
             if chemin:
                 contenu = tools.read_file(chemin)
                 avis = brain.controler(objectif, chemin, contenu)
+                # Gemma relit aussi
+                gemma_avis = brain.relire_gemma(objectif, chemin, contenu)
+                avis["gemma_ok"] = gemma_avis.get("ok", True)
+                avis["gemma_raison"] = gemma_avis.get("raison", "")
                 _verrouiller(chemin, verrou)
                 suite = avis.get("suite", "done")
                 if suite.lower() == chemin.lower():
                     suite = ""
+
+                # Si Gemma trouve un bug, on force immédiatement une correction au prochain tour
+                if avis.get("gemma_ok") is False:
+                    guidance_kimi = (
+                        f"Le fichier {chemin} a été validé par DeepSeek mais Gemma voit un défaut : "
+                        f"{avis.get('gemma_raison')}. Corrige immédiatement ce fichier en utilisant write_file."
+                    )
 
         narration = _narrer(tour_abs, start_cycle, decision.get("action", "?"), resultat, avis)
 
@@ -196,8 +234,7 @@ def _run_cycle(
         _log({"tour": tour_abs, "cycle": start_cycle, "action": decision.get("action"), "args": decision.get("args"),
               "resultat": (str(resultat)[:300] + "..." if len(str(resultat)) > 300 else str(resultat)),
               "pensee": narration})
-        if callback:
-            callback(tour_abs, decision, narration)
+        _callback_safety(callback, tour_abs, decision, narration)
 
         if decision.get("action") == "done":
             return True, tour_abs, guidance_kimi
@@ -215,7 +252,6 @@ def boucle(
     historique = []
     verrou = set()
 
-    # Détection du type de projet pour la continuation
     obj = objectif.lower()
     description_continu = "j'ajoute des fonctionnalités au projet"
     for mot, desc in CONTINU_DESCRIPTIONS.items():
@@ -223,7 +259,6 @@ def boucle(
             description_continu = desc
             break
 
-    # Définir workspace si un chemin est fourni
     chemin = objectif
     if isinstance(chemin, str):
         import re
@@ -235,6 +270,7 @@ def boucle(
     guidance_kimi = ""
     termine = False
     cycle = 1
+    nb_commits = 0
 
     while tour_courant <= max_tours and not termine:
         termine, dernier_tour, guidance_kimi = _run_cycle(
@@ -253,16 +289,28 @@ def boucle(
             cycle += 1
             tour_courant = dernier_tour + 1
 
+        # Commit auto tous les N tours
+        if tour_courant % commit_chaque == 0 and termine is False:
+            try:
+                msg = f"agent: tour {tour_courant}"
+                res = tools.commit_push(msg)
+                _callback_safety(callback, tour_courant, {"action": "commit_push", "args": {"message": msg}}, f"💾 {res[:100]}")
+                nb_commits += 1
+            except Exception as e:
+                print(f"[commit auto] {e}")
+
     # Relecture finale optionnelle
     fixes = _relire_finale(objectif)
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
+    # Avis final Kimi
     fichiers = []
     for nom in tools.list_tree().splitlines():
         if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
             fichiers.append(nom)
 
+    guidance_kimi = ""
     if fichiers:
         resume_bloc = []
         for f in fichiers[:8]:
@@ -272,7 +320,7 @@ def boucle(
         guidance_kimi = brain.kimi_final_review(objectif, bloc) or ""
 
     if callback:
-        callback(0, {"action": "done", "args": {}}, f"Résumé final : {guidance_kimi or 'Terminé.'}")
+        _callback_safety(callback, 0, {"action": "done", "args": {}}, f"Résumé final : {guidance_kimi or 'Terminé.'}")
 
 
 def _log(data: dict):
