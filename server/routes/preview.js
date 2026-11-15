@@ -41,15 +41,50 @@ function resolveBase(req) {
   return decodeBase(req.query?.base)
 }
 
+function normalizeHtmlPaths(html, baseHref) {
+  // Convertit les chemins absolus à la racine (/style.css) en relatifs au preview
+  // sans toucher aux URLs externes, data:, #, etc.
+  if (!html) return html
+  const base = baseHref.endsWith('/') ? baseHref : baseHref + '/'
+
+  const absReplacer = (full, attr, quote, val) => {
+    if (!val || val.startsWith('http') || val.startsWith('//') || val.startsWith('data:') || val.startsWith('#')) {
+      return full
+    }
+    if (val.startsWith('/')) {
+      const rel = val.slice(1)
+      return `${attr}=${quote}${base}${rel}${quote}`
+    }
+    return full
+  }
+
+  html = html.replace(/(href|src)(=)(["'])([^"']+)\3/g, absReplacer)
+  return html
+}
+
 router.get('/*', async (req, res) => {
   try {
     const base = resolveBase(req)
-    const target = req.path.startsWith('/') ? req.path.slice(1) : req.path
+    let target = req.path.startsWith('/') ? req.path.slice(1) : req.path
+    if (!target || target === '') {
+      target = 'index.html'
+    }
     const filePath = path.resolve(base, target)
     if (!filePath.startsWith(base) && !filePath.toLowerCase().startsWith(base.toLowerCase())) {
       return res.status(403).send('Forbidden')
     }
+
+    const ext = path.extname(filePath).toLowerCase()
     const content = await fs.readFile(filePath)
+
+    // Pour les fichiers HTML, on normalise les liens absolus /xxx
+    if (ext === '.html' || ext === '.htm') {
+      const html = content.toString('utf-8')
+      const normalized = normalizeHtmlPaths(html, '/api/preview/')
+      res.setHeader('Content-Type', 'text/html; charset=utf-8')
+      return res.send(normalized)
+    }
+
     res.setHeader('Content-Type', getMime(filePath))
     res.send(content)
   } catch (e) {
