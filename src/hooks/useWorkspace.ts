@@ -4,17 +4,25 @@ import type { Workspace } from '../types/ide'
 
 const STORAGE_KEY = 'trappistcode-workspaces'
 
+function isAbsolutePath(p: string) {
+  if (!p) return false
+  if (/^[a-zA-Z]:[\\/]/.test(p)) return true
+  if (p.startsWith('/')) return true
+  return false
+}
+
 export function useWorkspace() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [activePath, setActivePath] = useState('')
 
   useEffect(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-      setWorkspaces(saved)
-      if (saved.length > 0) {
-        setActivePath(saved[0].path)
-        localApi.setWorkspace(saved[0].path)
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') as Workspace[]
+      const clean = saved.filter((w) => isAbsolutePath(w.path))
+      setWorkspaces(clean)
+      if (clean.length > 0) {
+        setActivePath(clean[0].path)
+        localApi.setWorkspace(clean[0].path)
       }
     } catch {
       setWorkspaces([])
@@ -22,11 +30,13 @@ export function useWorkspace() {
   }, [])
 
   const saveWorkspaces = useCallback((list: Workspace[]) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-    setWorkspaces(list)
+    const clean = list.filter((w) => isAbsolutePath(w.path))
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(clean))
+    setWorkspaces(clean)
   }, [])
 
   const addWorkspace = useCallback((path: string, name?: string) => {
+    if (!isAbsolutePath(path)) return
     const ws: Workspace = { path, name: name || path.split(/[/\\]/).pop() || path }
     const next = [ws, ...workspaces.filter((w) => w.path !== path)].slice(0, 12)
     saveWorkspaces(next)
@@ -44,6 +54,7 @@ export function useWorkspace() {
   }, [activePath, workspaces, saveWorkspaces])
 
   const setActive = useCallback((path: string) => {
+    if (!isAbsolutePath(path)) return
     setActivePath(path)
     localApi.setWorkspace(path)
   }, [])
