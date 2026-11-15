@@ -30,6 +30,7 @@ type Mode = 'agent' | 'ask'
 
 const STATUS_URL = 'http://localhost:8000/agent/status'
 const RUN_URL = 'http://localhost:8000/agent/run'
+const STOP_URL = 'http://localhost:8000/agent/stop'
 const ASK_URL = 'http://localhost:8000/ask'
 
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
@@ -85,6 +86,21 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
       } catch { /* ignore */ }
     }, 1000)
   }
+
+  const fetchStatus = async () => {
+    try {
+      const { data } = await axios.get<AgentStatus>(STATUS_URL, { timeout: 5000 })
+      setRunning(data.running)
+      setTourCount(data.tours?.length || 0)
+    } catch { /* ignore */ }
+  }
+
+  // Récupère l'état réel au montage (utile si reload alors que l'agent tourne)
+  useEffect(() => {
+    fetchStatus()
+    const id = setInterval(fetchStatus, 2000)
+    return () => clearInterval(id)
+  }, [])
 
   const runAgent = async () => {
     const mission = input.trim()
@@ -167,8 +183,13 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
-  const stop = () => {
+  const stop = async () => {
     cancelRef.current = true
+    try {
+      await axios.post(STOP_URL, {}, { timeout: 5000 })
+    } catch (e: any) {
+      // ignore
+    }
     setRunning(false)
     setLoading(false)
     stopPoll()

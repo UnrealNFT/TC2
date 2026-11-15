@@ -11,6 +11,14 @@ from . import brain
 # Nombre de tours par cycle
 CYCLE_SIZE = 10
 
+# Flag global d'arrêt demandé par l'utilisateur
+STOP_FLAG = {"stop": False}
+
+
+def request_stop():
+    """Appelé par le serveur /agent/stop."""
+    STOP_FLAG["stop"] = True
+
 
 def _executer_action(action: dict) -> str:
     nom = action.get("action", "done")
@@ -21,6 +29,9 @@ def _executer_action(action: dict) -> str:
     if not fn:
         return f"ERREUR: action inconnue {nom}"
     try:
+        # Alias cmd -> command pour l'outil shell
+        if nom == "shell" and "command" not in args and "cmd" in args:
+            args = {"command": args["cmd"]}
         return fn(**args)
     except Exception as e:
         return f"ERREUR: {e}"
@@ -123,7 +134,18 @@ def _callback_safety(callback, tour, decision, narration):
             print(f"[callback error] {e}")
 
 
-def _essai_decision(objectif, historique, contexte, prompt_sup):
+def _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only: bool = False):
+    """Décision du prochain tour, avec option fallback complet sur Kimi."""
+    if kimi_only:
+        try:
+            fallback = brain.secours_kimi(
+                f"OBJECTIF : {objectif}\n\nFICHIERS :\n{contexte[:1800]}\n\n"
+                f"Ollama est indisponible. Donne la prochaine action JSON."
+            )
+            fallback["pensee"] = "[Kimi only] " + fallback.get("pensee", "")
+            return fallback
+        except Exception:
+            pass
     try:
         return brain.decider(objectif, historique, contexte, guidance=prompt_sup)
     except Exception as e:
@@ -140,13 +162,14 @@ def _essai_decision(objectif, historique, contexte, prompt_sup):
 
 
 def _detecter_boucle(historique: list) -> str:
-    """Renvoie un message si le modèle tourne en rond sur list_files/read_file."""
+    """Renvoie un message si le modèle tourne en rond sur list_files/read_file/shell."""
     if len(historique) < 4:
         return ""
     recent = historique[-6:]
     actions = [a.get("action") for a, _ in recent]
+
     # Boucle list_files / read_file répétés
-    if actions.count("list_files") >= 4 or actions.count("read_file") >= 4 or ' '.join(actions).count("list_files list_files list_files") > 0:
+    if actions.count("list_files") >= 4 or actions.count("read_file") >= 4:
         fichiers = []
         for nom in tools.list_tree().splitlines()[:20]:
             if nom.strip() and not nom.endswith("/"):
@@ -157,6 +180,16 @@ def _detecter_boucle(historique: list) -> str:
                 "Choisis immédiatement une action concrète : améliorer un fichier existant avec write_file, "
                 "ajouter un nouveau fichier, ou shell/npm. Fichiers disponibles : " + ", ".join(fichiers)
             )
+
+    # Boucle shell répétée avec erreur
+    if actions.count("shell") >= 3:
+        derniers_resultats = [str(r) for _, r in historique[-3:]]
+        if any(r.startswith("ERREUR") for r in derniers_resultats):
+            return (
+                "\n\n⚠️ TU AS FAIT TROP DE shell QUI ÉCHOUENT. "
+                "Arrête shell. Si l'objectif est atteint, appelle done. Sinon fais write_file/read_file."
+            )
+
     return ""
 
 
@@ -171,16 +204,21 @@ def _run_cycle(
     continu: bool,
     guidance_kimi: str,
     description_continu: str,
+    kimi_only: bool = False,
 ):
     for tour_in_cycle in range(1, CYCLE_SIZE + 1):
         tour_abs = start_tour + tour_in_cycle - 1
         if tour_abs > max_tours:
             break
 
+        if STOP_FLAG["stop"]:
+            _callback_safety(callback, tour_abs, {"action": "done", "args": {}}, "🛑 Arrêt demandé.")
+            return True, tour_abs, guidance_kimi, True
+
         contexte = tools.get_context(max_files=30)
 
         # Kimi supervisor exactement aux tours 10, 20, 30...
-        if tour_abs % CYCLE_SIZE == 0 and tour_abs > 0:
+        if tour_abs % CYCLE_SIZE == 0 and tour_abs > 0 and not kimi_only:
             gui = brain.kimi_supervise(tour_abs, objectif, historique, contexte)
             if gui:
                 guidance_kimi = gui
@@ -201,7 +239,7 @@ def _run_cycle(
         if anti_boucle:
             prompt_sup += anti_boucle
 
-        decision = _essai_decision(objectif, historique, contexte, prompt_sup)
+        decision = _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only=kimi_only)
 
         # Empêcher les actions inutiles sur fichiers verrouillés
         if decision.get("action") == "write_file":
@@ -234,12 +272,12 @@ def _run_cycle(
         # Double contrôle après un write_file : DeepSeek puis Gemma
         avis = None
         suite = ""
-        if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR"):
+        if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR") and not kimi_only:
             chemin = decision.get("args", {}).get("path", "")
             if chemin:
                 contenu = tools.read_file(chemin)
                 avis = brain.controler(objectif, chemin, contenu)
-                # Gemma relit aussi
+                # Gemma relit aussi, mais seulement si elle est fonctionnelle
                 gemma_avis = brain.relire_gemma(objectif, chemin, contenu)
                 avis["gemma_ok"] = gemma_avis.get("ok", True)
                 avis["gemma_raison"] = gemma_avis.get("raison", "")
@@ -264,9 +302,9 @@ def _run_cycle(
         _callback_safety(callback, tour_abs, decision, narration)
 
         if decision.get("action") == "done":
-            return True, tour_abs, guidance_kimi
+            return True, tour_abs, guidance_kimi, False
 
-    return False, tour_abs, guidance_kimi
+    return False, tour_abs, guidance_kimi, False
 
 
 def boucle(
@@ -298,9 +336,23 @@ def boucle(
     termine = False
     cycle = 1
     nb_commits = 0
+    kimi_only = False
+    ollama_failures = 0
+
+    # Reset stop flag au démarrage
+    STOP_FLAG["stop"] = False
 
     while tour_courant <= max_tours and not termine:
-        termine, dernier_tour, guidance_kimi = _run_cycle(
+        if STOP_FLAG["stop"]:
+            termine = True
+            break
+
+        # Si Ollama a planté plusieurs fois, passer entièrement sur Kimi
+        if not kimi_only and ollama_failures >= 2:
+            print("[loop] bascule définitive sur Kimi pour le reste de la mission")
+            kimi_only = True
+
+        termine, dernier_tour, guidance_kimi, stopped = _run_cycle(
             objectif,
             historique,
             verrou,
@@ -311,7 +363,21 @@ def boucle(
             continu,
             guidance_kimi,
             description_continu,
+            kimi_only=kimi_only,
         )
+        if stopped:
+            termine = True
+            if callback:
+                _callback_safety(callback, dernier_tour, {"action": "done", "args": {}}, "🛑 Mission arrêtée par l'utilisateur.")
+            break
+
+        # Détection d'échec Ollama récurrent
+        recent = historique[-10:]
+        ollama_failures = sum(
+            1 for a, _ in recent
+            if "[Kimi fallback]" in str(a.get("pensee", "")) or "[Kimi only]" in str(a.get("pensee", ""))
+        )
+
         if not termine:
             cycle += 1
             tour_courant = dernier_tour + 1

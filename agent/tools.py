@@ -135,10 +135,14 @@ def get_context(max_files: int = 30) -> str:
     return "\n\n".join(context)
 
 
-def shell(command: str, timeout: int = 60) -> str:
+def shell(command: str = "", cmd: str = "", timeout: int = 60) -> str:
+    """Exécute une commande shell. Accepte 'command' ou 'cmd'."""
+    actual = command or cmd
+    if not actual:
+        return "ERREUR: pas de commande"
     try:
         proc = subprocess.run(
-            command,
+            actual,
             shell=True,
             cwd=ROOT,
             capture_output=True,
