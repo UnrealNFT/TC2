@@ -1,4 +1,17 @@
 import type React from 'react'
+import { useState, useRef, useEffect } from 'react'
+
+interface MenuItem {
+  label: string
+  shortcut?: string
+  action?: () => void
+  type?: 'item'
+}
+
+interface Menu {
+  label: string
+  items: Array<MenuItem | { type: 'separator' }>
+}
 
 interface MenuBarProps {
   onOpenFolder: () => void
@@ -21,18 +34,21 @@ export function MenuBar({
   onTogglePreview,
   previewOpen,
 }: MenuBarProps) {
-  const menus = [
+  const [open, setOpen] = useState<string | null>(null)
+  const barRef = useRef<HTMLDivElement>(null)
+
+  const menus: Menu[] = [
     {
       label: 'Fichier',
       items: [
         { label: 'Ouvrir un dossier…', shortcut: 'Ctrl+K Ctrl+O', action: onOpenFolder },
-        { label: 'Nouveau projet…', shortcut: '', action: onNewProject },
-        { type: 'separator' as const },
+        { label: 'Nouveau projet…', action: onNewProject },
+        { type: 'separator' },
         { label: 'Enregistrer', shortcut: 'Ctrl+S', action: onSave },
         { label: 'Enregistrer tout', shortcut: 'Ctrl+Shift+S', action: onSaveAll },
-        { type: 'separator' as const },
-        { label: 'Exporter en ZIP', shortcut: '', action: onExportZip },
-        { label: 'Importer un ZIP', shortcut: '', action: onImportZip },
+        { type: 'separator' },
+        { label: 'Exporter en ZIP', action: onExportZip },
+        { label: 'Importer un ZIP', action: onImportZip },
       ],
     },
     {
@@ -43,29 +59,59 @@ export function MenuBar({
     },
   ]
 
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if (!barRef.current?.contains(e.target as Node)) {
+        setOpen(null)
+      }
+    }
+    document.addEventListener('mousedown', onClick)
+    return () => document.removeEventListener('mousedown', onClick)
+  }, [])
+
   return (
-    <div style={styles.bar}>
-      {menus.map((menu) => (
-        <div key={menu.label} style={styles.menu}>
-          <button style={styles.btn}>{menu.label}</button>
-          <div style={styles.dropdown}>
-            {menu.items.map((item, idx) =>
-              item.type === 'separator' ? (
-                <div key={idx} style={styles.sep} />
-              ) : (
-                <div
-                  key={item.label}
-                  onClick={item.action}
-                  style={styles.item}
-                >
-                  <span style={{ flex: 1 }}>{item.label}</span>
-                  {item.shortcut && <span style={styles.shortcut}>{item.shortcut}</span>}
-                </div>
-              )
+    <div ref={barRef} style={styles.bar}>
+      {menus.map((menu) => {
+        const isOpen = open === menu.label
+        return (
+          <div
+            key={menu.label}
+            style={styles.menu}
+            onMouseEnter={() => open && setOpen(menu.label)}
+          >
+            <button
+              onClick={() => setOpen(isOpen ? null : menu.label)}
+              style={{
+                ...styles.btn,
+                backgroundColor: isOpen ? 'var(--tc-selected)' : 'transparent',
+              }}
+            >
+              {menu.label}
+            </button>
+            {isOpen && (
+              <div style={styles.dropdown}>
+                {menu.items.map((item, idx) =>
+                  'type' in item && item.type === 'separator' ? (
+                    <div key={idx} style={styles.sep} />
+                  ) : (
+                    <div
+                      key={(item as MenuItem).label}
+                      onClick={() => {
+                        setOpen(null)
+                        ;(item as MenuItem).action?.()
+                      }}
+                      style={styles.item}
+                    >
+                      <span style={{ flex: 1 }}>{(item as MenuItem).label}</span>
+                      {(item as MenuItem).shortcut && <span style={styles.shortcut}>{(item as MenuItem).shortcut}</span>}
+                    </div>
+                  )
+                )}
+              </div>
             )}
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -82,8 +128,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   menu: {
     position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
   },
   btn: {
     background: 'transparent',
@@ -96,11 +140,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '4px',
   },
   dropdown: {
-    display: 'none',
     position: 'absolute',
     top: '100%',
     left: 0,
-    minWidth: '220px',
+    minWidth: '240px',
     backgroundColor: 'var(--tc-bg-elevated)',
     border: '1px solid var(--tc-border)',
     borderRadius: '4px',
@@ -128,15 +171,4 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     marginLeft: 'auto',
   },
-}
-
-// Hover dropdown via CSS-in-JS global
-const styleId = 'menubar-hover-style'
-if (typeof document !== 'undefined' && !document.getElementById(styleId)) {
-  const s = document.createElement('style')
-  s.id = styleId
-  s.textContent = `
-    [data-menubar] > div:hover > div:last-child { display: block !important; }
-  `
-  document.head.appendChild(s)
 }
