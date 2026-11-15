@@ -1,19 +1,30 @@
-def _normaliser_index_html(html: str, root: str) -> str:
-    """Convertit les href/src absolus pointant vers root en chemins relatifs."""
-    if not html or not root:
-        return html
-    root_lower = root.lower()
-
-    def replace_attr(m: re.Match) -> str:
-        attr = m.group(1)
-        val = m.group(2)
-        if val.startswith(("http", "//", "#", "data:")):
-            return m.group(0)
-        abs_val = os.path.abspath(val)
-        if abs_val.lower().startswith(root_lower):
-            rel = os.path.relpath(abs_val, root).replace("\\", "/")
-            return f'{attr}="{rel}"'
-        return m.group(0)
-
-    html = re.sub(r'(href|src)="([^"]+)"', replace_attr, html)
-    return re.sub(r"(href|src)='([^']+)'", replace_attr, html)
+        if nom == "write_file" and str(resultat).startswith("OK"):
+            chemin = _chemin(action)
+            try:
+                contenu = tools.read_file((action.get("args") or {}).get("path", ""))
+            except Exception:
+                contenu = (action.get("args") or {}).get("content", "")
+            # Normalise index.html : liens absolus -> relatifs
+            if chemin.endswith("index.html") or (action.get("args") or {}).get("path", "").lower().endswith("index.html"):
+                try:
+                    contenu_normalise = _normaliser_index_html(contenu, tools.ROOT_INITIAL or tools.ROOT)
+                    if contenu_normalise != contenu:
+                        tools.write_file((action.get("args") or {}).get("path", "index.html"), contenu_normalise)
+                        contenu = contenu_normalise
+                except Exception as e:
+                    print(f"[normalisation index.html] {e}")
+            avis = brain.controler(objectif, chemin, contenu)
+            critique = f"deepseek ok={avis.get('ok')} — {avis.get('raison')} — suite: {avis.get('suite')}"
+            if avis.get("ok") or essais.get(chemin, 0) >= 1:
+                verrou.add(chemin)
+            else:
+                essais[chemin] = 1
+            suivant = str(avis.get("suite") or "done").strip().lower().split()[0].strip(".,;:")
+            if suivant not in ("", "done", "terminé", "termine", chemin):
+                suite = suivant
+            elif suite == chemin:
+                suite = ""
+            if callback:
+                callback(tour, {"action": "deepseek", "args": {"path": chemin}}, critique)
+            _log({"tour": tour, "deepseek": avis, "chemin": chemin})
+            done_refuses = 0
