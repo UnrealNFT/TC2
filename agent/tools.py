@@ -7,18 +7,60 @@ from typing import Callable
 
 ROOT = os.getcwd()
 
+# Dossiers critiques protégés. L'agent ne peut jamais écrire/supprimer dedans.
+PROTECTED_PATHS: list[str] = []
+
+
+def _load_protected_paths():
+    """Charge les chemins critiques à protéger automatiquement."""
+    home = Path.home()
+    candidates = [
+        os.getcwd(),
+        str(home / "TC2-git"),
+        str(home / "TC2-master"),
+        str(home / "Documents"),
+        str(home / "Desktop"),
+        str(home),
+    ]
+    for p in candidates:
+        try:
+            PROTECTED_PATHS.append(os.path.normcase(os.path.abspath(p)))
+        except Exception:
+            pass
+
+
+_load_protected_paths()
+
 
 def initialize_root(path: str):
     """Définit le workspace sur lequel l'agent travaille."""
     global ROOT
+    normalized = os.path.normcase(os.path.abspath(path))
+    for protected in PROTECTED_PATHS:
+        if normalized == protected or normalized.startswith(protected + os.sep):
+            raise PermissionError(
+                f"Workspace interdit : {path} est un dossier protégé. "
+                "Crée un sous-dossier dédié, ex: C:\\Users\\Djaf\\MonProjet."
+            )
     ROOT = os.path.abspath(path)
     os.makedirs(ROOT, exist_ok=True)
 
 
 def _path(relative: str) -> str:
     if os.path.isabs(relative):
-        return relative
-    return os.path.normpath(os.path.join(ROOT, relative))
+        full = os.path.abspath(relative)
+    else:
+        full = os.path.normpath(os.path.join(ROOT, relative))
+
+    normalized = os.path.normcase(full)
+    root_norm = os.path.normcase(ROOT)
+    for protected in PROTECTED_PATHS:
+        if normalized == protected or normalized.startswith(protected + os.sep):
+            if root_norm != protected and not root_norm.startswith(protected + os.sep):
+                raise PermissionError(
+                    f"Chemin interdit : {relative} sort du workspace et touche un dossier protégé."
+                )
+    return full
 
 
 def exists_file(path: str) -> bool:
