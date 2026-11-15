@@ -33,9 +33,9 @@ const RUN_URL = 'http://localhost:8000/agent/run'
 const ASK_URL = 'http://localhost:8000/ask'
 
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
-  const { messages, push, clear, updateLast } = useChatHistory(workspace || '__global__')
+  const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<Mode>('agent')
+  const [mode, setMode] = useState<Mode>('ask')
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [tourCount, setTourCount] = useState(0)
@@ -134,15 +134,20 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
-  const quickAsk = async () => {
-    const mission = input.trim()
-    if (!mission) return
+  const ask = async () => {
+    const question = input.trim()
+    if (!question) return
     setInput('')
-    push({ role: 'user', text: mission })
-    push({ role: 'system', text: 'Question rapide…' })
+    push({ role: 'user', text: question })
+    push({ role: 'system', text: 'Réflexion…' })
     try {
+      const history = historyForLLM()
+      // on retire la dernière entrée user qu'on envoie explicitement
+      const previous = history.slice(0, -1)
       const { data } = await axios.post<{ final: string }>(ASK_URL, {
-        question: mission,
+        question,
+        workspace: workspace || '__global__',
+        history: previous,
         file_content: fileContent || '',
         file_path: openPath || '',
       }, { timeout: 120_000 })
@@ -158,7 +163,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     if (mode === 'agent') {
       void runAgent()
     } else {
-      void quickAsk()
+      void ask()
     }
   }
 
@@ -194,8 +199,9 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
         {messages.length === 0 && (
           <div style={styles.welcome}>
             <strong>Trappist Agent</strong><br />
-            Choisis Ask pour discuter, Agent pour agir sur les fichiers.<br />
-            Les messages sont sauvegardés par workspace.
+            <strong>Ask</strong> : discussion avec mémoire du workspace.<br />
+            <strong>Agent</strong> : exécute des actions sur les fichiers.<br />
+            L'historique est sauvegardé par projet.
           </div>
         )}
         {messages.map((msg) => {
@@ -217,7 +223,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           <button
             onClick={() => setMode('ask')}
             style={{ ...styles.modeBtn, ...(mode === 'ask' ? styles.modeActive : {}) }}
-            title="Pose une question"
+            title="Discussion avec mémoire"
           >
             Ask
           </button>
@@ -238,7 +244,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           disabled={loading}
           style={styles.input}
         />
-        <button onClick={submit} disabled={loading || !input.trim()} style={styles.sendBtn} title={mode === 'agent' ? "Lancer l'agent" : "Envoyer la question"}>
+        <button onClick={submit} disabled={loading || !input.trim()} style={styles.sendBtn} title={mode === 'agent' ? "Lancer l'agent" : "Envoyer"}>
           {running ? '⏳' : '➤'}
         </button>
         {running && <button onClick={stop} style={styles.stopBtn}>■</button>}
