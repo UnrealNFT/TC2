@@ -9,7 +9,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
 from agent import loop, tools
-from agent.brain import chat_classifier, kimi_final_review, discuter, decider
+from agent.brain import chat_classifier, kimi_final_review, repondre_conversation
 
 app = FastAPI()
 
@@ -83,17 +83,6 @@ async def health():
     return {"status": "ok", "agent_running": agent_running, "workspace": current_workspace}
 
 
-def _systeme_ask() -> str:
-    return (
-        "Tu es TrappistCode, l'assistant de développement de l'utilisateur. "
-        "Tu as accès au contexte du projet. "
-        "Réponds en français de façon naturelle, concise, utile. "
-        "Si la question porte sur le code, explique ou propose directement. "
-        "Si la demande nécessite de modifier/créer/supprimer des fichiers, dis-le explicitement. "
-        "Tu conserveras le fil de la conversation grâce à l'historique."
-    )
-
-
 def _build_context(file_path: str, file_content: str, workspace: str) -> str:
     parts = []
     if workspace and workspace != "__global__":
@@ -118,43 +107,37 @@ async def ask(body: AskBody):
     try:
         session_key = body.workspace or "__global__"
 
-        # Initialiser / enrichir la session serveur
+        # Synchroniser session serveur avec historique client
         session = ask_sessions.setdefault(session_key, [])
-        # on merge l'historique client (si présent) avec la session serveur
         if body.history:
             for h in body.history[-10:]:
-                if {'role': h.role, 'content': h.content} not in [dict(m) for m in session[-10:]]:
-                    session.append({"role": h.role, "content": h.content})
+                entry = {"role": h.role, "content": h.content}
+                if entry not in session[-10:]:
+                    session.append(entry)
 
+        # Brancher le contexte du fichier ouvert
+        if body.file_path and body.file_content:
+            fpath = body.file_path
+            snippet = body.file_content[:2500]
+            ok = True
+            for i, m in enumerate(session[-6:]):
+                if m.get("role") == "user" and f"Fichier ouvert : {fpath}" in str(m.get("content", "")):
+                    ok = False
+                    break
+            if ok:
+                session.append({
+                    "role": "user",
+                    "content": f"[Contexte fichier ouvert] {fpath}:\n{snippet}"
+                })
+
+        # Construire les messages pour le LLM
+        messages = [m for m in session[-MAX_ASK_HISTORY:] if m["role"] in ("user", "assistant")]
+
+        # Appel LLM avec mémoire
         contexte = _build_context(body.file_path or "", body.file_content or "", session_key)
+        answer = repondre_conversation(messages, body.question, contexte)
 
-        messages = [
-            {"role": "system", "content": _systeme_ask()},
-        ]
-        # historique conversationnel (user / assistant) avant la question en cours
-        for m in session[-MAX_ASK_HISTORY:]:
-            role = m.get("role", "user")
-            if role not in ("user", "assistant"):
-                continue
-            messages.append({"role": role, "content": m.get("content", "")})
-
-        # ajout contexte + question
-        prompt = body.question
-        if contexte:
-            prompt = f"[Contexte projet]\n{contexte}\n\n[Question]\n{body.question}"
-        messages.append({"role": "user", "content": prompt})
-
-        # Classification fallback
-        classification = chat_classifier.classify(body.question)
-        if classification == "chat":
-            answer = discuter(body.question)
-        else:
-            # Code / projet : on donne un avis/explication en s'appuyant sur le contexte
-            answer = discuter(
-                f"Réponds comme un assistant de code. Contexte: {contexte[:2000] if contexte else 'aucun'}.\n\nQuestion: {body.question}"
-            )
-
-        # Mise à jour de la mémoire
+        # Mettre à jour la mémoire
         session.append({"role": "user", "content": body.question})
         session.append({"role": "assistant", "content": answer})
         ask_sessions[session_key] = session[-MAX_ASK_HISTORY:]
