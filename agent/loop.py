@@ -200,32 +200,48 @@ def _detecter_boucle(historique: list) -> str:
 
 
 def _kimi_valide(mission: str, contexte: str) -> tuple[bool, str]:
-    """Demande à Kimi s'il valide le travail. Renvoie (valide, reponse_texte)."""
+    """Demande à Kimi s'il valide le travail. Renvoie (valide, reponse_texte).
+
+    Logique de vote : une phrase contenant un positif mais aussi un négatif
+    est interprétée comme non valide.
+    """
     try:
         reponse = brain.kimi_final_review(mission, contexte)
         texte_bas = reponse.lower()
 
-        # Vérifie explicitement les refus avant les validations
-        negatifs = [
-            r"pas\s+(?:ok|done|valid|terminé|fini|prêt)",
-            r"non\s+(?:ok|valid|validé|terminé)",
-            r"pas\s+encore",
-            r"incomplet",
-            r"non\s+résolu",
-            r"problèmes?\s+restant",
+        # Découpe en phrases simples pour vérifier les conflits localisés
+        phrases = re.split(r"[.!?\n]+", texte_bas)
+
+        positifs = ["ok", "done", "validé", "validée", "terminé", "terminée", "fini", "prêt", "correct"]
+        negatifs = ["pas", "non", "mais", "manque", "erreur", "bug", "bugs", "incomplet", "problème", "problèmes", "refus", "attend"]
+
+        # Phrase par phrase : si une phrase contient un positif + un négatif -> non valide
+        for phrase in phrases:
+            phrase = phrase.strip()
+            if not phrase:
+                continue
+            a_positif = any(re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç]|$)", phrase) for p in positifs)
+            a_negatif = any(re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(n)}(?:[^a-zàâäéèêëïîôùûüç]|$)", phrase) for n in negatifs)
+            if a_positif and a_negatif:
+                return False, reponse
+
+        # Si un mot négatif global apparaît isolément (pas ok, non, incomplet, etc.)
+        patterns_negatifs = [
+            r"(?:^|[^a-zàâäéèêëïîôùûüç])pas\s+(?:ok|done|valid|terminé|fini|prêt)(?:[^a-zàâäéèêëïîôùûüç]|$)",
+            r"(?:^|[^a-zàâäéèêëïîôùûüç])non\s+(?:ok|valid|validé|terminé)(?:[^a-zàâäéèêëïîôùûüç]|$)",
+            r"(?:^|[^a-zàâäéèêëïîôùûüç])incomplet(?:[^a-zàâäéèêëïîôùûüç]|$)",
+            r"(?:^|[^a-zàâäéèêëïîôùûüç])non\s+résolu(?:[^a-zàâäéèêëïîôùûüç]|$)",
         ]
-        for pattern in negatifs:
+        for pattern in patterns_negatifs:
             if re.search(pattern, texte_bas):
                 return False, reponse
 
-        # Vérifie une validation explicite
-        validation = re.search(
-            r"(?:^|[^a-zàâäéèêëïîôùûüç])"
-            r"(?:ok|done|validé|validée|terminé|terminée|fini|prêt|correct|bon)"
-            r"(?:[^a-zàâäéèêëïîôùûüç]|$)",
-            texte_bas,
+        # Il faut au moins un positif explicite dans tout le texte
+        valide = any(
+            re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç]|$)", texte_bas)
+            for p in positifs
         )
-        return bool(validation), reponse
+        return valide, reponse
     except Exception as e:
         return False, f"Erreur appel Kimi: {e}"
 
@@ -284,7 +300,7 @@ def _run_cycle(
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
         if guidance_kimi:
-            prompt_sup += f"\n\nGUIDANCE KIMI : {guidance_kimi}"
+            prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
             guidance_kimi = ""  # consommé immédiatement
 
         # Injection mémoire : derniers retours Kimi sur cette mission
