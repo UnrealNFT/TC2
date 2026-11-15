@@ -65,6 +65,10 @@ class TaskBody(BaseModel):
     max_tours: Optional[int] = 20
 
 
+class KimiBody(BaseModel):
+    question: str
+
+
 def _callback(tour: int, decision: dict, narration: str):
     global agent_tours
     agent_tours.append({"tour": tour, "action": decision.get("action"), "pensee": narration})
@@ -198,6 +202,44 @@ async def task(body: TaskBody):
         )
         return {"status": "started", "tours": agent_tours}
     return {"status": "queued", "detail": "Agent occupé, tâche mise en file d'attente."}
+
+
+@app.post("/kimi")
+async def kimi_review(body: KimiBody):
+    """Proxy vers WaveSpeed pour éviter le CORS côté navigateur."""
+    import requests  # import local volontaire
+
+    api_key = os.getenv("WAVESPEED_API_KEY") or os.getenv("VITE_WAVESPEED_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="Clé WaveSpeed non configurée sur le serveur.")
+
+    try:
+        response = requests.post(
+            "https://llm.wavespeed.ai/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": os.getenv("WAVESPEED_MODEL", "moonshotai/kimi-k2.7-code"),
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Tu es un architecte senior. Réponds en français avec un plan court et des étapes concrètes. Pas de code complet.",
+                    },
+                    {"role": "user", "content": body.question[:4000]},
+                ],
+                "max_tokens": 800,
+                "temperature": 0.4,
+            },
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = str(data.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        return {"text": text}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Erreur WaveSpeed: {e}")
 
 
 if __name__ == "__main__":

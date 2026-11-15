@@ -5,38 +5,17 @@ export interface KimiResponse {
 }
 
 export async function callWaveSpeed(question: string): Promise<KimiResponse> {
-  const apiKey =
-    import.meta.env.VITE_WAVESPEED_API_KEY ||
-    import.meta.env.VITE_WAVESPEED_KEY ||
-    import.meta.env.WAVESPEED_API_KEY
-
-  if (!apiKey) {
-    throw new Error('Clé WaveSpeed manquante : définis VITE_WAVESPEED_API_KEY dans ton .env')
-  }
-
   const res = await axios.post(
-    'https://llm.wavespeed.ai/v1/chat/completions',
-    {
-      model: 'moonshotai/kimi-k2.7-code',
-      messages: [
-        {
-          role: 'system',
-          content: 'Tu es un architecte senior. Réponds en français avec un plan court et des étapes concrètes. Pas de code complet.',
-        },
-        { role: 'user', content: question.slice(0, 4000) },
-      ],
-      max_tokens: 800,
-      temperature: 0.4,
-    },
+    'http://localhost:8000/kimi',
+    { question: question.slice(0, 4000) },
     {
       headers: {
-        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       timeout: 60_000,
     }
   )
-  const text = String(res.data.choices?.[0]?.message?.content || '').trim()
+  const text = String(res.data.text || '').trim()
   return { text }
 }
 
