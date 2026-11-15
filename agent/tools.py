@@ -7,7 +7,7 @@ from typing import Callable
 
 ROOT = os.getcwd()
 
-# Dossiers critiques protégés. L'agent ne peut jamais écrire/supprimer dedans.
+# Dossiers critiques exacts protégés. L'agent ne peut jamais les utiliser comme workspace.
 PROTECTED_PATHS: list[str] = []
 
 
@@ -20,7 +20,7 @@ def _load_protected_paths():
         str(home / "TC2-master"),
         str(home / "Documents"),
         str(home / "Desktop"),
-        str(home),
+        str(home / "Downloads"),
     ]
     for p in candidates:
         try:
@@ -32,16 +32,23 @@ def _load_protected_paths():
 _load_protected_paths()
 
 
+def _is_critical_path(path: str) -> bool:
+    """Vérifie si le chemin correspond exactement à un dossier protégé."""
+    normalized = os.path.normcase(os.path.abspath(path))
+    for protected in PROTECTED_PATHS:
+        if normalized == protected:
+            return True
+    return False
+
+
 def initialize_root(path: str):
     """Définit le workspace sur lequel l'agent travaille."""
     global ROOT
-    normalized = os.path.normcase(os.path.abspath(path))
-    for protected in PROTECTED_PATHS:
-        if normalized == protected or normalized.startswith(protected + os.sep):
-            raise PermissionError(
-                f"Workspace interdit : {path} est un dossier protégé. "
-                "Crée un sous-dossier dédié, ex: C:\\Users\\Djaf\\MonProjet."
-            )
+    if _is_critical_path(path):
+        raise PermissionError(
+            f"Workspace interdit : {path} est un dossier protégé. "
+            "Crée un sous-dossier dédié, ex: C:\\Users\\Djaf\\MonProjet."
+        )
     ROOT = os.path.abspath(path)
     os.makedirs(ROOT, exist_ok=True)
 
@@ -52,14 +59,11 @@ def _path(relative: str) -> str:
     else:
         full = os.path.normpath(os.path.join(ROOT, relative))
 
-    normalized = os.path.normcase(full)
-    root_norm = os.path.normcase(ROOT)
-    for protected in PROTECTED_PATHS:
-        if normalized == protected or normalized.startswith(protected + os.sep):
-            if root_norm != protected and not root_norm.startswith(protected + os.sep):
-                raise PermissionError(
-                    f"Chemin interdit : {relative} sort du workspace et touche un dossier protégé."
-                )
+    # Empêche de sortir du workspace vers un dossier critique exact
+    if _is_critical_path(full):
+        raise PermissionError(
+            f"Chemin interdit : {relative} correspond à un dossier protégé."
+        )
     return full
 
 
