@@ -25,10 +25,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-KIMI_ENABLED = True
+KIMI_ENABLED = os.getenv("WAVESPEED_API_KEY") is not None
 MODELE_CERVEAU = "satgeze/gemma4-12b-uncensored-1m"
 
-TOURS = deque(maxlen=100)
+TOURS = deque(maxlen=200)
 AGENT_LOCK = threading.Lock()
 AGENT_RUNNING = False
 
@@ -55,12 +55,11 @@ class AgentRequest(BaseModel):
 
 
 def _set_workspace(path: str = ""):
-    """Initialise le dossier de travail de l'agent."""
-    if path:
-        tools.set_root(path)
-    else:
-        tools.ROOT = os.path.abspath(os.environ.get("TRAPPIST_WORKSPACE", os.getcwd()))
-        os.makedirs(tools.ROOT, exist_ok=True)
+    """Initialise le dossier de travail de l'agent en se basant sur le workspace demandé."""
+    target = path or os.environ.get("TRAPPIST_WORKSPACE", os.getcwd())
+    target = os.path.abspath(target)
+    os.makedirs(target, exist_ok=True)
+    tools.set_root(target)
 
 
 def extraire_dossier(question: str) -> str:
@@ -81,12 +80,10 @@ def _propre(texte: str) -> str:
 
 def call_kimi(question: str) -> str:
     if not KIMI_ENABLED:
+        print("[Kimi] désactivé (pas de clé WAVESPEED_API_KEY)")
         return ""
     api_key = os.getenv("WAVESPEED_API_KEY")
-    if not api_key:
-        print("[Kimi] pas de clé, on continue sans")
-        return ""
-    print("[Kimi] appel...")
+    print("[Kimi] appel plan...")
     try:
         response = requests.post(
             "https://llm.wavespeed.ai/v1/chat/completions",
@@ -151,7 +148,7 @@ def classer(question: str, file_path: str, file_content: str) -> dict:
 
 def callback(tour: int, action: dict, resultat: str):
     nom = action.get("action", "?")
-    ligne = f"[Tour {tour}] {nom} -> {str(resultat)[:160]}"
+    ligne = f"[Tour {tour}] {nom} -> {str(resultat)[:180]}"
     print(ligne)
     TOURS.append({"tour": tour, "action": nom, "pensee": ligne})
 
