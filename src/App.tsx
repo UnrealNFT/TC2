@@ -145,7 +145,6 @@ function App() {
   const handleAddWorkspace = async () => {
     try {
       const absPath = await requestDirectory()
-      await localApi.setWorkspace(absPath)
       await localApi.listFiles('')
       addWorkspace(absPath)
       setOpenFiles([])
@@ -157,7 +156,6 @@ function App() {
       const fallback = window.prompt('Chemin absolu du dossier projet :', 'C:\\Users\\Djaf\\MonProjet')
       if (!fallback) return
       try {
-        await localApi.setWorkspace(fallback.trim())
         await localApi.listFiles('')
         addWorkspace(fallback.trim())
         setOpenFiles([])
@@ -181,13 +179,12 @@ function App() {
       parent = input.trim()
     }
 
-    const projectPath = pathJoin(parent, sanitizeName(name))
     const template = window.prompt('Template ? (vanilla, react, node)', 'vanilla') || 'vanilla'
 
     try {
       await localApi.createProject(name, template, parent)
+      const projectPath = pathJoin(parent, sanitizeName(name))
       addWorkspace(projectPath)
-      await localApi.setWorkspace(projectPath)
       setOpenFiles([])
       setActiveFilePath(null)
       setRefreshKey((k) => k + 1)
@@ -200,7 +197,6 @@ function App() {
   }
 
   const handleSelectProject = async (path: string) => {
-    await localApi.setWorkspace(path)
     addWorkspace(path)
     setActive(path)
     setOpenFiles([])
@@ -491,6 +487,7 @@ function App() {
 const styles: Record<string, React.CSSProperties> = {
   app: {
     display: 'flex',
+    flex: 1,
     flexDirection: 'column',
     height: '100vh',
     backgroundColor: 'var(--tc-bg)',
