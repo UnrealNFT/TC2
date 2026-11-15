@@ -7,7 +7,7 @@ from typing import Callable
 
 ROOT = os.getcwd()
 
-# Dossiers critiques exacts protégés. L'agent ne peut jamais les utiliser comme workspace.
+# Dossiers critiques protégés : source du programme + dossiers système Windows.
 PROTECTED_PATHS: list[str] = []
 
 
@@ -15,16 +15,22 @@ def _load_protected_paths():
     """Charge les chemins critiques à protéger automatiquement."""
     home = Path.home()
     candidates = [
-        os.getcwd(),
+        # Code source de l'agent (localisations courantes)
         str(home / "TC2-git"),
         str(home / "TC2-master"),
-        str(home / "Documents"),
-        str(home / "Desktop"),
-        str(home / "Downloads"),
+        str(Path(__file__).resolve().parent.parent),
+        # Dossiers système Windows
+        r"C:\Windows",
+        r"C:\Program Files",
+        r"C:\Program Files (x86)",
+        r"C:\ProgramData",
+        str(home / "AppData"),
     ]
     for p in candidates:
         try:
-            PROTECTED_PATHS.append(os.path.normcase(os.path.abspath(p)))
+            resolved = os.path.normcase(os.path.abspath(p))
+            if resolved not in (".", "/", "\\") and os.path.exists(resolved):
+                PROTECTED_PATHS.append(resolved)
         except Exception:
             pass
 
@@ -43,6 +49,9 @@ def _is_critical_path(path: str) -> bool:
             # Rejet si le chemin est DANS un dossier protégé
             if normalized.startswith(protected + os.sep):
                 return True
+        # Rejet des racines de disques seules (ex: C:\)
+        if re.fullmatch(r"[a-z]:\\?", normalized):
+            return True
         return False
     except Exception:
         return True
@@ -66,7 +75,6 @@ def _path(relative: str) -> str:
     else:
         full = os.path.normpath(os.path.join(ROOT, relative))
 
-    # Empêche de sortir du workspace vers un dossier protégé exact
     if _is_critical_path(full):
         raise PermissionError(
             f"Chemin interdit : {relative} correspond à un dossier protégé."
