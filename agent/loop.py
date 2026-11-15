@@ -1,5 +1,8 @@
 # pyright: reportMissingImports=false
-"""Boucle principale de l'agent : cycles, DeepSeek, Gemma, Kimi, narration."""
+"""Boucle principale de l'agent : cycles, DeepSeek, Gemma, Kimi, narration.
+Critère : sur un projet déjà existant, hors de ce dépôt, l'agent ne liste pas
+deux fois, ne réécrit pas un fichier entier, et ne dit done qu'après un test réussi.
+"""
 import json
 import os
 import re
@@ -62,7 +65,8 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
             return f"✅ Fichier validé (DeepSeek + Gemma). Prochaine étape : {suite}"
         return "✏️ Écriture du fichier..."
     if action == "edit_file":
-        return "✏️ Modification ciblée du fichier..."
+        lignes = str(resultat).splitlines()
+        return "✏️ Modification ciblée.\n" + "\n".join(lignes[:16])
     if action == "read_file":
         lignes = len(str(resultat).splitlines())
         return f"👁️ Lecture ({lignes} lignes)."
@@ -94,16 +98,28 @@ CONTINU_DESCRIPTIONS = {
 }
 
 
+def _test_reussi(historique: list) -> bool:
+    """Vrai seulement si test_project ou test_file a renvoyé un succès."""
+    for action, resultat in historique:
+        if action.get("action") not in ("test_project", "test_file"):
+            continue
+        texte = str(resultat).strip()
+        if texte.startswith("ERREUR") or texte.startswith("AUCUN TEST"):
+            continue
+        return True
+    return False
+
+
 def _verifier_done_valide(objectif: str, historique: list) -> bool:
     """Empêche un done prématuré si des fichiers vitaux semblent manquants ou vides."""
     ecrits = set()
     for action, _ in historique:
-        if action.get("action") == "write_file":
+        if action.get("action") in ("write_file", "edit_file"):
             ecrits.add(action.get("args", {}).get("path", "").lower())
 
     obj = objectif.lower()
     if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
-        if "index.html" not in ecrits:
+        if "index.html" not in ecrits and not tools.exists_file("index.html"):
             return False
         contenu = tools.read_file("index.html")
         if not contenu or len(contenu.strip()) < 50:
@@ -336,12 +352,19 @@ def _run_cycle(
 
         # Bloquer un done prématuré
         if decision.get("action") == "done":
-            if not _verifier_done_valide(objectif, historique):
-                decision["pensee"] = "Travail incomplet détecté. Je continue plutôt que de terminer."
-                decision["action"] = "list_files"
+            if not _test_reussi(historique):
+                decision["pensee"] = "done refusé: aucun test réussi."
+                decision["action"] = "test_project"
                 decision["args"] = {}
+            elif not _verifier_done_valide(objectif, historique):
+                decision["pensee"] = "Travail incomplet. Je lis au lieu de terminer."
+                decision["action"] = "read_file"
+                decision["args"] = {"path": "index.html"}
 
-        resultat = _executer_action(decision)
+        if decision.get("action") == "list_files" and historique and historique[-1][0].get("action") == "list_files":
+            resultat = "ERREUR: déjà listé. Lis un fichier ou modifie."
+        else:
+            resultat = _executer_action(decision)
 
         # Normalise index.html -> racine si besoin
         if decision.get("action") == "write_file":
@@ -488,77 +511,14 @@ def boucle(
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
-    # Validation finale Kimi : boucle jusqu'à ce qu'il dise ok/done ou max fix atteint
-    fichiers = []
-    for nom in tools.list_tree().splitlines():
-        if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
-            fichiers.append(nom)
-
-    resume_bloc = []
-    for f in fichiers[:8]:
-        cont = tools.read_file(f)
-        resume_bloc.append(f"=== {f} ===\n{cont[:2000]}")
-    bloc = "\n\n".join(resume_bloc)
-
-    # Appel initial Kimi
-    valide, reponse_kimi = _kimi_valide(objectif, bloc)
-    _callback_safety(callback, 0, {"action": "kimi", "args": {}}, f"🌙 Validation Kimi : {'OK' if valide else 'BLOQUAGES DÉTECTÉS'}")
-
-    iterations_kimi = 0
-    max_iterations_kimi = 3
-    while not valide and iterations_kimi < max_iterations_kimi:
-        if _was_stopped():
-            break
-
-        iterations_kimi += 1
-        # Enregistrer le retour dans la mémoire
-        memory.save_kimi_feedback(objectif, dernier_tour, ", ".join(fichiers), "validation finale", reponse_kimi)
-
-        # Reprendre la boucle avec le conseil de Kimi
-        guidance_kimi = (
-            f"VALIDATION FINALE KIMI NON OK (itération {iterations_kimi}). "
-            f"Conseil de Kimi : {reponse_kimi[:1200]}. Corrige immédiatement et continue."
-        )
-        _callback_safety(callback, 0, {"action": "kimi", "args": {}}, f"🌙 Kimi itération {iterations_kimi}: {reponse_kimi[:200]}...")
-
-        # Relancer un mini-cycle de correction
-        corr_termine, dernier_tour, guidance_kimi, stopped = _run_cycle(
-            objectif,
-            historique,
-            verrou,
-            dernier_tour + 1,
-            cycle + 1,
-            callback,
-            max(dernier_tour + 5, max_tours),
-            continu,
-            guidance_kimi,
-            description_continu,
-            kimi_only=kimi_only,
-        )
-        cycle += 1
-
-        if stopped:
-            break
-
-        # Re-snapshot
-        fichiers = []
-        for nom in tools.list_tree().splitlines():
-            if any(nom.endswith(ext) for ext in (".html", ".js", ".css", ".tsx", ".ts", ".py")):
-                fichiers.append(nom)
-        resume_bloc = []
-        for f in fichiers[:8]:
-            cont = tools.read_file(f)
-            resume_bloc.append(f"=== {f} ===\n{cont[:2000]}")
-        bloc = "\n\n".join(resume_bloc)
-        valide, reponse_kimi = _kimi_valide(objectif, bloc)
-
-    # Dernier message
+    # Le mot ok de Kimi ne termine pas la mission. Seul un test réussi compte.
+    test_ok = _test_reussi(historique)
     if _was_stopped():
         final_msg = "Mission arrêtée par l'utilisateur."
-    elif valide:
-        final_msg = f"Mission validée par Kimi. {reponse_kimi[:300]}"
+    elif test_ok:
+        final_msg = "Mission terminée. Un test a réussi."
     else:
-        final_msg = f"Mission terminée après {max_iterations_kimi} itérations Kimi. Dernier avis : {reponse_kimi[:500]}"
+        final_msg = "Arrêt sans test réussi. done refusé."
 
     if callback:
         _callback_safety(callback, 0, {"action": "done", "args": {}}, f"Résumé final : {final_msg}")

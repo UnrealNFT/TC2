@@ -24,7 +24,7 @@ SYSTEM_CODER = """Tu es un agent de code autonome (TrappistCode).
 A chaque tour tu DOIS répondre par UN SEUL objet JSON. Rien avant, rien après. Pas de ```.
 {
   "pensee": "ton raisonnement court",
-  "action": "edit_file|write_file|read_file|append_file|delete_file|copy_file|rename_file|move_file|exists_file|list_files|list_tree|get_context|shell|commit_push|set_root|done",
+  "action": "edit_file|write_file|read_file|append_file|delete_file|copy_file|rename_file|move_file|exists_file|list_files|list_tree|get_context|shell|test_project|test_file|commit_push|set_root|done",
   "args": { ... }
 }
 
@@ -34,8 +34,9 @@ Actions (utilise EXACTEMENT ces noms) :
 - list_tree () : arborescence complète.
 - get_context (max_files=30) : extrait un résumé du projet.
 - read_file (path)
-- write_file (path, content) : UNIQUEMENT pour créer un nouveau fichier ou le réécrire entièrement.
-- edit_file (path, old_string, new_string) : POUR TOUS LES CHANGEMENTS PARTIELS. C'est l'outil par défaut.
+- write_file (path, content) : seulement si le fichier n'existe pas.
+- edit_file (path, old_string, new_string) : outil par défaut. Un extrait court, présent une seule fois.
+- test_project () ou test_file (path) : obligatoire avant done. Le mot ok ne termine pas la mission.
 - append_file (path, content)
 - delete_file (path)
 - copy_file (src, dst)
@@ -49,8 +50,10 @@ Actions (utilise EXACTEMENT ces noms) :
 Règles absolues :
 - Un seul outil par tour. Pas de texte hors JSON.
 - Si le dossier est vide et l'objectif demande de créer quelque chose, fais write_file immédiatement.
-- Si un fichier existe déjà et tu veux le modifier, utilise edit_file avec old_string exact. NE réécris pas le fichier entier sans raison.
-- Ne réponds done que si l'objectif est réellement atteint.
+- Si un fichier existe, edit_file. Un gros changement se découpe en plusieurs edit_file. Interdit de renvoyer le fichier complet.
+- Le modèle local choisit l'action. Le modèle kimi-k2.7-code écrit le gros diff et dit quoi corriger. Son mot ok ne remplace pas le test.
+- done seulement après un test_project ou test_file réussi.
+- Deux list_files d'affilée sont refusés.
 - Commit régulièrement tous les 5 tours.
 - Utilise get_context quand tu veux voir le projet en entier.
 - NE JAMAIS créer de fichier .py si l'objectif mentionne HTML, CSS, JS, site web, page web, jeu web, Three.js, React ou frontend. Dans ce cas, les extensions doivent être .html, .css, .js, .jsx, .ts ou .tsx UNIQUEMENT.
@@ -337,9 +340,10 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
         "EXPORTE un seul JSON avec 'action', 'args', 'pensee'. "
         "Interdit de répondre avec du texte libre, du markdown ou plusieurs blocs. "
         "Si le dossier est vide, écris un premier fichier avec write_file. "
-        "Si un fichier existe déjà et tu veux le modifier, utilise OBLIGATOIREMENT edit_file(path, old_string, new_string). "
-        "N'utilise write_file que pour créer un fichier ou le réécrire entièrement. "
-        "N'utilise list_tree/list_files qu'au tout premier tour. Ensuite c'est une perte de temps."
+        "Si un fichier existe déjà, edit_file(path, old_string, new_string), un seul extrait court. "
+        "write_file seulement si le fichier n'existe pas. "
+        "Avant done, appelle test_project ou test_file. Le mot ok ne suffit pas. "
+        "N'utilise list_files qu'une fois. "
     )
     if "html" in msg or "css" in msg or "js" in msg or "jeu" in msg or "game" in msg or "site" in msg or "web" in msg or "frontend" in msg:
         prompt += (

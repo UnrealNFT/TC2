@@ -1,4 +1,5 @@
 """Outils basiques pour l'agent : fichiers, shell, git, contexte."""
+import difflib
 import os
 import re
 import shutil
@@ -113,20 +114,17 @@ def write_file(path: str, content: str) -> str:
     if not isinstance(content, str):
         content = str(content)
 
-    # Backup avant écrasement, si le fichier existe et n'est pas vide
     if os.path.isfile(full):
         try:
-            existing_size = os.path.getsize(full)
-            if existing_size > 0:
-                shutil.copy2(full, _backup_path(full))
+            existing = open(full, "r", encoding="utf-8").read()
         except Exception:
-            pass
-
-    # Protection contre écriture vide ou très courte sur fichier existant non vide
-    if os.path.isfile(full) and len(content.strip()) < 10:
-        existing = read_file(path)
-        if len(existing.strip()) > 50:
-            return f"ERREUR: refus d'écraser {path} avec un contenu quasi vide ({len(content)} caractères). Utilise edit_file."
+            existing = ""
+        if existing and len(content) < max(200, len(existing) // 2):
+            return (
+                f"ERREUR: refus d'écraser {path} "
+                f"({len(existing)} car. -> {len(content)}). Utilise edit_file."
+            )
+        return f"ERREUR: {path} existe déjà. Utilise edit_file, un seul extrait."
 
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
@@ -134,10 +132,12 @@ def write_file(path: str, content: str) -> str:
 
 
 def edit_file(path: str, old_string: str, new_string: str) -> str:
-    """Remplace la première occurrence de old_string par new_string dans un fichier."""
+    """Remplace old_string par new_string. L'extrait doit être unique."""
     full = _path(path)
     if not os.path.isfile(full):
         return f"ERREUR: {path} n'existe pas, utilise write_file"
+    if not old_string:
+        return "ERREUR: extrait vide. Rien écrit."
 
     try:
         with open(full, "r", encoding="utf-8") as f:
@@ -145,19 +145,29 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
     except Exception as e:
         return f"ERREUR LECTURE {path}: {e}"
 
-    if old_string not in content:
-        return f"ERREUR: old_string introuvable dans {path}"
+    count = content.count(old_string)
+    if count == 0:
+        return f"ERREUR: extrait introuvable dans {path}. Rien écrit."
+    if count != 1:
+        return f"ERREUR: extrait trouvé {count} fois dans {path}. Rien écrit."
 
-    # Backup
+    new_content = content.replace(old_string, new_string, 1)
+    diff = "".join(
+        difflib.unified_diff(
+            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
+            fromfile=path,
+            tofile=path,
+            n=2,
+        )
+    )
     try:
         shutil.copy2(full, _backup_path(full))
     except Exception:
         pass
-
-    new_content = content.replace(old_string, new_string, 1)
     with open(full, "w", encoding="utf-8") as f:
         f.write(new_content)
-    return f"ÉDITÉ: {path}"
+    return f"ÉDITÉ: {path}\n{diff[:2500]}"
 
 
 def append_file(path: str, content: str) -> str:
