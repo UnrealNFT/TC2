@@ -73,6 +73,7 @@ Réponds UNIQUEMENT par ce JSON :
 {"ok": true, "raison": "court", "suite": "done"}
 ok=false seulement s'il manque quelque chose d'essentiel DANS CE FICHIER, par rapport à l'objectif.
 suite = done, ou le prochain fichier à créer. Interdit de redemander le fichier qu'on te montre.
+Si le fichier est vide, contient juste un placeholder, ou n'inclut pas les imports mentionnés dans l'objectif, ok=false.
 Si le fichier est suffisant pour sa part de l'objectif, ok=true. N'invente pas de défauts."""
 
 SYSTEM_KIMI_SUPERVISOR = """Tu es Kimi, supervisor externe de TrappistCode.
@@ -85,6 +86,15 @@ Donne :
 3. Les prochaines 1 à 3 actions concrètes à faire
 4. Si l'objectif semble atteint, dis "done"
 Sois technique, percutant, sans langage de bois."""
+
+SYSTEM_KIMI_FINAL = """Tu es Kimi, superviseur final de TrappistCode.
+On te montre l'objectif utilisateur et les fichiers créés.
+Réponds en français, 4 à 8 phrases.
+Donne :
+1. Si l'objectif semble atteint
+2. Les bugs ou incohérences visibles
+3. Les améliorations concrètes à faire, ou dis "done" si c'est bon
+Sois direct, ne réécris pas le code."""
 
 
 def _cle_wavespeed() -> str:
@@ -178,6 +188,11 @@ def _coder(prompt: str) -> dict:
     return data
 
 
+def decider_raw(prompt: str) -> dict:
+    """Pour la relecture finale. Le prompt est déjà complet."""
+    return _coder(prompt)
+
+
 def est_discussion(question: str) -> bool:
     """Vrai seulement pour une question, pas pour un ordre de code.
     Un chemin Windows ou un verbe de création force le mode agent."""
@@ -221,7 +236,7 @@ def planner(objectif: str, contexte: str) -> dict:
     """Plan optionnel. Gemma aussi, pour ne pas changer de modèle avant d'avoir codé."""
     r = _chat(
         [
-            {"role": "system", "content": 'Réponds en JSON : {"pensee":"...","plan":["étape 1","étape 2"]}'},
+            {"role": "system", "content": '{"pensee":"...","plan":["étape 1","étape 2"]}'},
             {"role": "user", "content": f"OBJECTIF : {objectif}\n\nCONTEXTE :\n{contexte[:3000]}\n/no_think"},
         ],
         num_predict=600,
@@ -415,4 +430,36 @@ def kimi_supervise(tour: int, objectif: str, historique: list, contexte: str) ->
         return data["choices"][0]["message"]["content"][:2000]
     except Exception as e:
         print(f"[kimi_supervise] {e}")
+        return ""
+
+
+def kimi_final_review(objectif: str, fichiers_bloc: str) -> str:
+    """Kimi juge le résultat final. Retourne du texte ou 'done'."""
+    cle = _cle_wavespeed()
+    if not cle:
+        return ""
+    body = json.dumps({
+        "model": MODELE_KIMI,
+        "temperature": 0.2,
+        "max_tokens": 1200,
+        "messages": [
+            {"role": "system", "content": SYSTEM_KIMI_FINAL},
+            {"role": "user", "content": (
+                f"OBJECTIF : {objectif[:1200]}\n\n"
+                f"FICHIERS CRÉÉS :\n{fichiers_bloc[:4000]}\n\n"
+                "Donne ton avis final."
+            )},
+        ],
+    }).encode()
+    req = urllib.request.Request(
+        "https://llm.wavespeed.ai/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {cle}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode())
+        return data["choices"][0]["message"]["content"][:2000]
+    except Exception as e:
+        print(f"[kimi_final_review] {e}")
         return ""
