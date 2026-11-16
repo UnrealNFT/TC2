@@ -1,25 +1,25 @@
 # pyright: reportMissingImports=false
 """Cerveau de l'agent TrappistCode.
 
-Architecture :
-- Gemma 4 Uncensored (12B) : cerveau principal, planifie, discute, écrit le code.
-- DeepSeek/Qwen Uncensored : relecteur critique et contrôleur de fichiers.
-- Kimi K2.7 Code (WaveSpeed) : supervisor externe et fallback hardware.
+Architecture SOLO (type Copilot) :
+- Chaque modèle travaille seul : il planifie, écrit, teste et se relit lui-même.
+- Aucun relais automatique vers Kimi ou un autre modèle.
+- Le modèle est choisi par l'utilisateur via model_key (voir agent/models.py).
 
 Stratégie VRAM Ollama :
-Gemma reste en mémoire pendant la boucle de code. DeepSeek est appelé uniquement
-pour controler() : Ollama décharge Gemma, charge DeepSeek, puis Gemma est
-rechargée au tour suivant.
+Le modèle local choisi reste en mémoire pendant la boucle de code.
 """
 import json, re, os, urllib.request
 import ollama
 
-# Noms exacts de ollama list.
-MODELE_CERVEAU = "satgeze/gemma4-12b-uncensored-1m:latest"
-MODELE_RELECTEUR = "hf.co/mradermacher/DeepSeek-V4-Pro-Qwen3.5-9B-UNCENSORED-heretic-i1-GGUF:Q4_K_M"
-MODELE_KIMI = "moonshotai/kimi-k2.7-code"
+from . import models
 
-# Actions supportées par tools.py. Gemma NE doit PAS en inventer d'autres.
+# Noms exacts de ollama list (conservés pour référence, le choix se fait via models.py)
+MODELE_CERVEAU = models.MODELES["gemma"]["id"]
+MODELE_RELECTEUR = models.MODELES["deepseek"]["id"]
+MODELE_KIMI = models.MODELES["kimi"]["id"]
+
+# Actions supportées par tools.py. Le modèle NE doit PAS en inventer d'autres.
 SYSTEM_CODER = """Tu es un agent de code autonome (TrappistCode).
 A chaque tour tu DOIS répondre par UN SEUL objet JSON. Rien avant, rien après. Pas de ```.
 {
@@ -51,7 +51,6 @@ Règles absolues :
 - Un seul outil par tour. Pas de texte hors JSON.
 - Si le dossier est vide et l'objectif demande de créer quelque chose, fais write_file immédiatement.
 - Si un fichier existe, edit_file. Un gros changement se découpe en plusieurs edit_file. Interdit de renvoyer le fichier complet.
-- Le modèle local choisit l'action. Le modèle kimi-k2.7-code écrit le gros diff et dit quoi corriger. Son mot ok ne remplace pas le test.
 - done seulement après un test_project ou test_file réussi.
 - Deux list_files d'affilée sont refusés.
 - Commit régulièrement tous les 5 tours.
@@ -60,8 +59,6 @@ Règles absolues :
 - Les noms de fichiers ne doivent jamais commencer par un espace ni contenir de caractères spéciaux. Utilise des chemins simples comme index.html, style.css, script.js.
 - Quand tu crées un jeu ou site web, crée obligatoirement index.html + style.css + script.js.
 - Appelle TOUJOURS list_files au premier tour si le workspace n'est pas vide, pour vérifier ce qui existe déjà."""
-
-SYSTEM_REVIEWER = """Tu es un reviewer uncensored. 2 phrases en français : est-ce que l'action a avancé l'objectif, et quelle est la prochaine correction concrète. Pas de JSON."""
 
 SYSTEM_CHAT = """Tu es l'assistant de TrappistCode.
 Réponds en français, 2 à 5 phrases, comme dans une discussion.
@@ -76,31 +73,6 @@ suite = done, ou le prochain fichier à créer/modifier. Interdit de redemander 
 Si le fichier est vide, placeholder, ou n'inclut pas les imports/éléments mentionnés dans l'objectif, ok=false.
 Si le fichier est suffisant pour sa part de l'objectif, ok=true. N'invente pas de défauts."""
 
-SYSTEM_RELECTURE_GEMMA = """Tu relis un fichier déjà validé par un autre modèle.
-Réponds UNIQUEMENT par ce JSON :
-{"ok": true, "raison": "court"}
-ok=false si tu vois une erreur SyntaxError, une import manquant, un return manquant, une balise mal fermée, ou une incohérence visible.
-ok=false si l'objectif demande un site web/jeu web et que le fichier est .py.
-ok=false si le nom du fichier commence par un espace ou un caractère spécial.
-ok=true si le fichier semble propre."""
-
-SYSTEM_KIMI_SUPERVISOR = """Tu es Kimi, supervisor externe de TrappistCode.
-Réponds en francais, 5 à 12 phrases maximum.
-Donne :
-1. Un diagnostic de la situation
-2. Les anomalies/blockages
-3. Les prochaines 1 à 3 actions concrètes à faire
-4. Si l'objectif semble atteint, dis "done"
-Sois technique, percutant, sans langage de bois."""
-
-SYSTEM_KIMI_FINAL = """Tu es Kimi, superviseur final de TrappistCode.
-Réponds en français, 4 à 8 phrases.
-Donne :
-1. Si l'objectif semble atteint
-2. Les bugs ou incohérences visibles
-3. Les améliorations concrètes à faire, ou dis "done" si c'est bon
-Sois direct, ne réécris pas le code."""
-
 
 def _cle_wavespeed() -> str:
     for nom in ("WAVESPEED_API_KEY", "VITE_WAVESPEED_KEY"):
@@ -114,10 +86,23 @@ def _cle_wavespeed() -> str:
     return ""
 
 
-def _chat(messages: list, num_predict: int, temperature: float, as_json: bool = False, modele: str = "") -> dict:
-    """Appelle Ollama. modele vaut Gemma par défaut. Passer MODELE_RELECTEUR pour DeepSeek/Qwen."""
+def _model_config(model_key: str) -> dict:
+    """Récupère la config du modèle demandé."""
+    return models.get(model_key)
+
+
+def _is_wavespeed(model_key: str) -> bool:
+    return _model_config(model_key)["type"] == "wavespeed"
+
+
+def _model_id(model_key: str) -> str:
+    return _model_config(model_key)["id"]
+
+
+def _chat_ollama(messages: list, num_predict: int, temperature: float, as_json: bool = False, modele: str = "") -> dict:
+    """Appelle Ollama avec un modèle local."""
     options = {"num_ctx": 12288, "num_predict": num_predict, "temperature": temperature}
-    base = {"model": modele or MODELE_CERVEAU, "messages": messages, "options": options}
+    base = {"model": modele, "messages": messages, "options": options}
     essais = []
     if as_json:
         essais.append({**base, "format": "json", "think": False})
@@ -135,6 +120,40 @@ def _chat(messages: list, num_predict: int, temperature: float, as_json: bool = 
     return {}
 
 
+def _chat_wavespeed(messages: list, num_predict: int, temperature: float, model_id: str) -> str:
+    """Appelle WaveSpeed (Kimi, GLM, etc.). Renvoie le texte brut."""
+    cle = _cle_wavespeed()
+    if not cle:
+        raise RuntimeError("Clé WaveSpeed absente du .env")
+    body = json.dumps({
+        "model": model_id,
+        "temperature": temperature,
+        "max_tokens": num_predict,
+        "messages": messages,
+    }).encode()
+    req = urllib.request.Request(
+        "https://llm.wavespeed.ai/v1/chat/completions",
+        data=body,
+        headers={"Authorization": f"Bearer {cle}", "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        data = json.loads(resp.read().decode())
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def _chat(messages: list, num_predict: int, temperature: float, as_json: bool = False, model_key: str = "gemma") -> str:
+    """Point d'entrée unique : choisit Ollama ou WaveSpeed selon le modèle."""
+    cfg = _model_config(model_key)
+    if cfg["type"] == "ollama":
+        reponse = _chat_ollama(messages, num_predict, temperature, as_json=as_json, modele=cfg["id"])
+        return _texte(reponse)
+    else:
+        # WaveSpeed ne supporte pas format=json, on demande du JSON dans le prompt
+        if as_json:
+            messages = [{"role": "system", "content": "Réponds UNIQUEMENT par un objet JSON valide. Rien d'autre."}] + messages
+        return _chat_wavespeed(messages, num_predict, temperature, cfg["id"])
+
+
 def _texte(reponse: dict) -> str:
     msg = reponse.get("message") or {}
     return (msg.get("content") or msg.get("thinking") or "").strip()
@@ -144,7 +163,7 @@ def _objet_json(texte: str) -> dict:
     """Extrait le premier objet JSON complet dans un texte."""
     if not texte:
         return {}
-    texte = re.sub(r"\`\`\`(?:json)?", "", texte).strip()
+    texte = re.sub(r"\\`\\`\\`(?:json)?", "", texte).strip()
     start = texte.find("{")
     while start != -1:
         depth = 0
@@ -175,37 +194,25 @@ def extraire_json(texte: str) -> dict:
     return {"pensee": "Pas de JSON utilisable", "action": "list_files", "args": {}}
 
 
-def _coder_with_fallback(prompt: str, prior_messages: list = None) -> dict:
-    """Un tour de Gemma, avec fallback Kimi si Ollama plante."""
-    messages = prior_messages or [
+def _coder(prompt: str, model_key: str = "gemma") -> dict:
+    """Un tour du modèle choisi. Pas de fallback : en solo, si ça plante, on remonte l'erreur."""
+    messages = [
         {"role": "system", "content": SYSTEM_CODER},
         {"role": "user", "content": prompt + "\n/no_think"},
     ]
-    try:
-        data = extraire_json(_texte(_chat(messages, 4500, 0.2, as_json=True)))
-        if data.get("pensee") == "Pas de JSON utilisable":
-            data = extraire_json(_texte(_chat(messages, 4500, 0.1, as_json=True)))
-        return data
-    except Exception as e:
-        err = str(e).lower()
-        if "prediction aborted" in err or "token repeat" in err or "repeat limit" in err:
-            print(f"[brain] Ollama en boucle, fallback Kimi demandé : {e}")
-            return secours_kimi(prompt)
-        raise
+    data = extraire_json(_chat(messages, 4500, 0.2, as_json=True, model_key=model_key))
+    if data.get("pensee") == "Pas de JSON utilisable":
+        data = extraire_json(_chat(messages, 4500, 0.1, as_json=True, model_key=model_key))
+    return data
 
 
-def _coder(prompt: str) -> dict:
-    return _coder_with_fallback(prompt)
-
-
-def decider_raw(prompt: str) -> dict:
+def decider_raw(prompt: str, model_key: str = "gemma") -> dict:
     """Pour la relecture finale. Le prompt est déjà complet."""
-    return _coder(prompt)
+    return _coder(prompt, model_key=model_key)
 
 
 def est_discussion(question: str) -> bool:
     q = question.strip().lower()
-    # un chemin Windows n'est pas une discussion
     if re.search(r"[a-z]:\\", q):
         return False
     mots_action = (
@@ -225,8 +232,8 @@ def est_discussion(question: str) -> bool:
     return any(w in q.split() for w in mots_chat) or len(question.strip()) < 20
 
 
-def discuter(question: str) -> str:
-    """Réponse courte, Gemma seule."""
+def discuter(question: str, model_key: str = "gemma") -> str:
+    """Réponse courte, modèle choisi seul."""
     r = _chat(
         [
             {"role": "system", "content": SYSTEM_CHAT},
@@ -234,8 +241,9 @@ def discuter(question: str) -> str:
         ],
         num_predict=500,
         temperature=0.4,
+        model_key=model_key,
     )
-    texte = _texte(r)
+    texte = r
     if "Persona:" in texte or "Draft" in texte or "Selected response" in texte:
         parts = [p.strip() for p in re.split(r"\n\s*\n", texte) if p.strip()]
         texte = parts[-1] if parts else texte
@@ -243,7 +251,7 @@ def discuter(question: str) -> str:
     return texte[:1200] or "Je suis là."
 
 
-def repondre_conversation(messages: list, question: str, contexte: str = "") -> str:
+def repondre_conversation(messages: list, question: str, contexte: str = "", model_key: str = "gemma") -> str:
     """Répond à une question avec un historique conversationnel.
     messages : liste de {'role': 'user'|'assistant', 'content': str}
     """
@@ -251,15 +259,15 @@ def repondre_conversation(messages: list, question: str, contexte: str = "") -> 
     if contexte:
         conv.append({"role": "user", "content": f"[Contexte projet]\n{contexte[:2500]}\n/no_think"})
     conv.append({"role": "user", "content": question})
-    r = _chat(
+    texte = _chat(
         [
             {"role": "system", "content": SYSTEM_CHAT},
             *conv[-12:],
         ],
         num_predict=900,
         temperature=0.35,
+        model_key=model_key,
     )
-    texte = _texte(r)
     if "Persona:" in texte or "Draft" in texte or "Selected response" in texte:
         parts = [p.strip() for p in re.split(r"\n\s*\n", texte) if p.strip()]
         texte = parts[-1] if parts else texte
@@ -267,9 +275,9 @@ def repondre_conversation(messages: list, question: str, contexte: str = "") -> 
     return texte[:1500] or "Je suis là."
 
 
-def planner(objectif: str, contexte: str) -> dict:
+def planner(objectif: str, contexte: str, model_key: str = "gemma") -> dict:
     """Plan optionnel."""
-    r = _chat(
+    texte = _chat(
         [
             {"role": "system", "content": '{"pensee":"...","plan":["étape 1","étape 2"]}'},
             {"role": "user", "content": f"OBJECTIF : {objectif}\n\nCONTEXTE :\n{contexte[:3000]}\n/no_think"},
@@ -277,11 +285,12 @@ def planner(objectif: str, contexte: str) -> dict:
         num_predict=600,
         temperature=0.2,
         as_json=True,
+        model_key=model_key,
     )
-    return extraire_json(_texte(r))
+    return extraire_json(texte)
 
 
-def decider(objectif: str, historique: list, contexte: str, guidance: str = "") -> dict:
+def decider(objectif: str, historique: list, contexte: str, guidance: str = "", model_key: str = "gemma") -> dict:
     """Prochaine action. Salutation simple => done direct."""
     msg = objectif.strip().lower()
     if len(msg) < 12 and any(w in msg for w in ("yo", "salut", "bonjour", "hey", "coucou", "hello")):
@@ -296,65 +305,54 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
         }
 
     if est_discussion(objectif) and not historique:
-        return {"pensee": "Discussion", "action": "done", "args": {"resume": discuter(objectif)}}
+        return {"pensee": "Discussion", "action": "done", "args": {"resume": discuter(objectif, model_key=model_key)}}
 
     hist = "\n".join(f"- {a} => {str(r)[:350]}" for a, r in historique[-8:]) or "(début)"
     lecture = ""
-    if any(k in msg for k in ("lis", "lire", "que fait", "répond", "repond")):
+    if not historique and not est_discussion(objectif):
         lecture = (
-            "\nLis avec list_files puis read_file. Interdit de répondre done avant. "
-            "Le resume du done sera ta réponse en français, pas le mot terminé."
+            "\n\nTu n'as encore rien fait. Commence par list_files ou get_context pour voir ce qui existe, "
+            "puis write_file si le dossier est vide, ou edit_file si tu modifies.\n"
         )
 
-    # Détection anti-boucle
     actions_recentes = [a.get("action") for a, _ in historique[-6:]]
     anti_boucle = ""
     if actions_recentes.count("list_files") >= 2 or actions_recentes.count("read_file") >= 3:
         fichiers = []
-        for nom in contexte.splitlines()[:25]:
+        for nom in hist.splitlines()[:20]:
             nom = nom.strip()
-            if nom and not nom.endswith("/") and any(nom.lower().endswith(ext) for ext in (".html", ".css", ".js", ".ts", ".tsx", ".py", ".json", ".md")):
+            if nom and not nom.endswith("/") and "=>" not in nom:
                 fichiers.append(nom)
         anti_boucle = (
             "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
-            f"Tu dois AGIR maintenant avec edit_file ou write_file. "
-            f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
-            f"Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string). "
-            "Si l'objectif est atteint, appelle done. "
-            "Interdit de répondre read_file ou list_files."
+            "Tu dois AGIR maintenant avec edit_file ou write_file. "
+            f"Fichiers existants : {', '.join(fichiers[:10])}. "
+            "Interdit de relire un fichier déjà lu."
         )
 
     prompt = (
         f"OBJECTIF : {objectif}\n\n"
-        f"FICHIERS :\n{contexte[:1800] or '(dossier vide)'}\n\n"
-        f"HISTORIQUE :\n{hist}\n\n"
-    )
-    if guidance:
-        prompt += f"GUIDANCE : {guidance}\n\n"
-    prompt += (
-        "EXPORTE un seul JSON avec 'action', 'args', 'pensee'. "
-        "Interdit de répondre avec du texte libre, du markdown ou plusieurs blocs. "
-        "Si le dossier est vide, écris un premier fichier avec write_file. "
-        "Si un fichier existe déjà, edit_file(path, old_string, new_string), un seul extrait court. "
-        "write_file seulement si le fichier n'existe pas. "
+        f"HISTORIQUE (dernières actions) :\n{hist}\n\n"
+        f"CONTEXTE PROJET :\n{contexte[:4000]}\n\n"
+        f"{lecture}{anti_boucle}"
+        "Donne la prochaine action JSON. Un seul outil. "
+        "Si tu viens de faire un test réussi et que l'objectif est atteint, action done. "
         "Avant done, appelle test_project ou test_file. Le mot ok ne suffit pas. "
         "N'utilise list_files qu'une fois. "
     )
     if "html" in msg or "css" in msg or "js" in msg or "jeu" in msg or "game" in msg or "site" in msg or "web" in msg or "frontend" in msg:
         prompt += (
-            "\n\n⚠️ OBJECTIF WEB / JEU WEB DÉTECTÉ. Tu dois créer exactement trois fichiers : index.html, style.css, script.js. "
+            "\n\n🌐 OBJECTIF WEB / JEU WEB DÉTECTÉ. Tu dois créer exactement trois fichiers : index.html, style.css, script.js. "
             "AUCUN fichier .py n'est autorisé. AUCUN nom de fichier ne doit commencer par un espace."
         )
-    prompt += lecture + anti_boucle
+    if guidance:
+        prompt += f"\n\nGUIDANCE : {guidance}"
 
-    try:
-        data = _coder(prompt)
-    except Exception as e:
-        return secours_kimi(prompt) or {"pensee": "fallback erreur", "action": "done", "args": {"resume": f"Erreur LLM: {e}"}}
+    data = _coder(prompt, model_key=model_key)
 
     vide = not contexte.strip() or contexte.strip() == "(dossier vide)"
     if vide and not historique and data.get("action") != "write_file":
-        data = _coder(prompt + "\n\nInterdit de répondre done. Écris le premier fichier maintenant avec write_file.")
+        data = _coder(prompt + "\n\nInterdit de répondre done. Écris le premier fichier maintenant avec write_file.", model_key=model_key)
 
     if data.get("action") in ("list_files", "list_tree", "read_file", "get_context") and (
         actions_recentes.count("list_files") >= 2 or actions_recentes.count("read_file") >= 2
@@ -377,26 +375,6 @@ def decider(objectif: str, historique: list, contexte: str, guidance: str = "") 
     return data
 
 
-def verifier(objectif: str, action: dict, resultat: str) -> str:
-    """Commentaire court pour le journal."""
-    debut = (resultat or "").lstrip()
-    if debut.startswith(("OK ", "Dossier de travail", "Commit local", "Commit:")) and "Erreur" not in debut[:80]:
-        return "Action réussie. Continuer vers la prochaine étape concrète."
-    try:
-        r = _chat(
-            [
-                {"role": "system", "content": SYSTEM_REVIEWER},
-                {"role": "user", "content": f"Objectif : {objectif[:500]}\nAction : {action.get('action')}\nRésultat : {resultat[:800]}\n/no_think"},
-            ],
-            num_predict=120,
-            temperature=0.2,
-            modele=MODELE_RELECTEUR,
-        )
-        return _texte(r) or "Résultat reçu."
-    except Exception as e:
-        return f"Reviewer indisponible ({e}). Continuer."
-
-
 def _oui(valeur) -> bool:
     if isinstance(valeur, bool):
         return valeur
@@ -405,10 +383,10 @@ def _oui(valeur) -> bool:
     return bool(valeur)
 
 
-def controler(objectif: str, chemin: str, contenu: str) -> dict:
-    """DeepSeek/Qwen juge le fichier. Appelé après write_file."""
+def controler(objectif: str, chemin: str, contenu: str, model_key: str = "gemma") -> dict:
+    """Le modèle choisi vérifie son propre fichier (solo)."""
     try:
-        r = _chat(
+        texte = _chat(
             [
                 {"role": "system", "content": SYSTEM_CONTROLE},
                 {"role": "user", "content": (
@@ -420,9 +398,9 @@ def controler(objectif: str, chemin: str, contenu: str) -> dict:
             num_predict=250,
             temperature=0.1,
             as_json=True,
-            modele=MODELE_RELECTEUR,
+            model_key=model_key,
         )
-        data = _objet_json(_texte(r))
+        data = _objet_json(texte)
     except Exception as e:
         return {"ok": True, "raison": f"avis illisible ({e}), on garde le fichier", "suite": "done"}
     if "ok" not in data:
@@ -432,127 +410,3 @@ def controler(objectif: str, chemin: str, contenu: str) -> dict:
         "raison": str(data.get("raison", ""))[:300],
         "suite": str(data.get("suite") or "done")[:200],
     }
-
-
-def relire_gemma(objectif: str, chemin: str, contenu: str) -> dict:
-    """Gemma relit un fichier déjà validé par DeepSeek."""
-    try:
-        r = _chat(
-            [
-                {"role": "system", "content": SYSTEM_RELECTURE_GEMMA},
-                {"role": "user", "content": (
-                    f"Objectif : {objectif[:800]}\n"
-                    f"Fichier : {chemin}\n"
-                    f"Contenu :\n{contenu[:4000]}\n/no_think"
-                )},
-            ],
-            num_predict=250,
-            temperature=0.1,
-            as_json=True,
-        )
-        data = _objet_json(_texte(r))
-    except Exception as e:
-        return {"ok": True, "raison": f"Gemma indisponible: {e}"}
-    if "ok" not in data:
-        return {"ok": True, "raison": "avis Gemma illisible"}
-    return {"ok": _oui(data.get("ok")), "raison": str(data.get("raison", ""))[:300]}
-
-
-def secours_kimi(prompt: str) -> dict:
-    """Kimi K2.7 Code, fallback quand Ollama est bloqué."""
-    cle = _cle_wavespeed()
-    if not cle:
-        return {"pensee": "pas de clé Kimi", "action": "done", "args": {"resume": "Kimi non appelé : clé WaveSpeed absente du .env."}}
-    body = json.dumps({
-        "model": MODELE_KIMI,
-        "temperature": 0.2,
-        "max_tokens": 4096,
-        "messages": [
-            {"role": "system", "content": SYSTEM_CODER},
-            {"role": "user", "content": prompt},
-        ],
-    }).encode()
-    req = urllib.request.Request(
-        "https://llm.wavespeed.ai/v1/chat/completions",
-        data=body,
-        headers={"Authorization": f"Bearer {cle}", "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode())
-        texte = data["choices"][0]["message"]["content"]
-    except Exception as e:
-        return {"pensee": "Kimi ko", "action": "done", "args": {"resume": f"Kimi indisponible : {e}"}}
-    obj = extraire_json(texte)
-    if not obj or "action" not in obj:
-        return {"pensee": "Kimi texte", "action": "done", "args": {"resume": texte[:2000]}}
-    return obj
-
-
-def kimispeak(messages: list) -> str:
-    """Dialogue libre avec Kimi (review/fallback)."""
-    cle = _cle_wavespeed()
-    if not cle:
-        return "Clé WaveSpeed manquante."
-    body = json.dumps({
-        "model": MODELE_KIMI,
-        "temperature": 0.4,
-        "max_tokens": 2000,
-        "messages": messages,
-    }).encode()
-    req = urllib.request.Request(
-        "https://llm.wavespeed.ai/v1/chat/completions",
-        data=body,
-        headers={"Authorization": f"Bearer {cle}", "Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode())
-        return data["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return f"❌ Kimi: {e}"
-
-
-def kimi_supervise(tour: int, objectif: str, historique: list, contexte: str) -> str:
-    """Kimi regarde l'état et donne des instructions concrètes."""
-    cle = _cle_wavespeed()
-    if not cle:
-        return ""
-    if not historique:
-        return ""
-    dernieres_actions = []
-    for a, r in historique[-8:]:
-        action = a.get("action", "?")
-        args = a.get("args", {})
-        resultat = str(r)[:120]
-        dernieres_actions.append(f"{action}({args}) => {resultat}")
-    hist_text = "\n".join(dernieres_actions)
-    messages = [
-        {"role": "system", "content": SYSTEM_KIMI_SUPERVISOR},
-        {"role": "user", "content": (
-            f"Tour {tour}. Objectif : {objectif}\n\n"
-            f"Dernières actions :\n{hist_text}\n\n"
-            f"Fichiers (contexte) :\n{contexte[:2500]}"
-        )},
-    ]
-    texte = kimispeak(messages)
-    if "done" in texte.lower():
-        return ""
-    return texte
-
-
-def kimi_final_review(objectif: str, contenu: str) -> str:
-    """Kimi fait un bilan final."""
-    messages = [
-        {"role": "system", "content": SYSTEM_KIMI_FINAL},
-        {"role": "user", "content": f"Objectif : {objectif}\n\nFichiers créés/modifiés :\n{contenu[:5000]}"},
-    ]
-    return kimispeak(messages)
-
-
-def call_kimi_fr(message: str) -> str:
-    """Wrapper simple pour parler à Kimi en français."""
-    return kimispeak([
-        {"role": "system", "content": SYSTEM_CHAT},
-        {"role": "user", "content": message},
-    ])
