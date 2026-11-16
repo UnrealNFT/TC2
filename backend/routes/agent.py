@@ -16,7 +16,7 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from agent import loop, tools
+from agent import loop, tools, models as agent_models
 from agent.brain import repondre_conversation
 
 router = APIRouter(tags=["agent"])
@@ -49,6 +49,7 @@ class AskBody(BaseModel):
     history: Optional[List[HistoryMsg]] = []
     file_content: Optional[str] = ""
     file_path: Optional[str] = ""
+    model: Optional[str] = "gemma"
 
 
 class RunBody(BaseModel):
@@ -56,6 +57,7 @@ class RunBody(BaseModel):
     workspace: Optional[str] = ""
     max_tours: Optional[int] = 20
     continu: Optional[bool] = False
+    model: Optional[str] = "gemma"
 
 
 class TaskBody(BaseModel):
@@ -78,7 +80,7 @@ def _callback(tour: int, decision: dict, narration: str):
     state.tours.append({"tour": tour, "action": decision.get("action"), "pensee": narration})
 
 
-def _run_agent(objectif: str, workspace: str, max_tours: int, continu: bool):
+def _run_agent(objectif: str, workspace: str, max_tours: int, continu: bool, model: str = "gemma"):
     with state.lock:
         state.running = True
         state.tours.clear()
@@ -86,7 +88,7 @@ def _run_agent(objectif: str, workspace: str, max_tours: int, continu: bool):
         if workspace:
             tools.initialize_root(workspace)
             state.workspace = workspace
-        loop.boucle(objectif, max_tours=max_tours, callback=_callback, continu=continu)
+        loop.boucle(objectif, max_tours=max_tours, callback=_callback, continu=continu, model_key=model)
     finally:
         state.running = False
 
@@ -107,6 +109,12 @@ def _build_context(file_path: str, file_content: str, workspace: str) -> str:
     except Exception:
         pass
     return "\n".join(parts)
+
+
+@router.get("/models")
+async def list_models():
+    """Renvoie la liste des modèles disponibles pour le sélecteur."""
+    return {"models": agent_models.catalogue()}
 
 
 @router.post("/files/write")
@@ -151,7 +159,7 @@ async def ask(body: AskBody):
 
         messages = [m for m in session[-MAX_ASK_HISTORY:] if m["role"] in ("user", "assistant")]
         contexte = _build_context(body.file_path or "", body.file_content or "", session_key)
-        answer = await asyncio.to_thread(repondre_conversation, messages, body.question, contexte)
+        answer = await asyncio.to_thread(repondre_conversation, messages, body.question, contexte, body.model)
 
         session.append({"role": "user", "content": body.question})
         session.append({"role": "assistant", "content": answer})
@@ -166,7 +174,7 @@ async def run_agent(body: RunBody):
     if state.running:
         raise HTTPException(status_code=409, detail="Un agent est déjà en cours d'exécution.")
     await asyncio.get_running_loop().run_in_executor(
-        executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, body.continu,
+        executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, body.continu, body.model,
     )
     summary = state.tours[-1]["pensee"] if state.tours else "Terminé."
     return {"resume": summary, "status": "ok", "tours": state.tours}
@@ -187,7 +195,7 @@ async def stop_agent():
 async def task(body: TaskBody):
     if not state.running:
         await asyncio.get_running_loop().run_in_executor(
-            executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, False,
+            executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, False, "gemma",
         )
         return {"status": "started", "tours": state.tours}
     return {"status": "queued", "detail": "Agent occupé, tâche mise en file d'attente."}
