@@ -1,7 +1,8 @@
 # pyright: reportMissingImports=false
-"""Boucle principale de l'agent : cycles, DeepSeek, Gemma, Kimi, narration.
-Critère : sur un projet déjà existant, hors de ce dépôt, l'agent ne liste pas
-deux fois, ne réécrit pas un fichier entier, et ne dit done qu'après un test réussi.
+"""Boucle principale de l'agent : cycles, narration, tests.
+
+Mode SOLO : un seul modèle fait tout (plan, code, tests, relecture).
+Aucun relais automatique vers Kimi ou un autre modèle.
 """
 import json
 import os
@@ -38,7 +39,6 @@ def _executer_action(action: dict) -> str:
     if not fn:
         return f"ERREUR: action inconnue {nom}"
     try:
-        # Alias cmd -> command pour l'outil shell
         if nom == "shell" and "command" not in args and "cmd" in args:
             args = {"command": args["cmd"]}
         return fn(**args)
@@ -60,9 +60,9 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
     if action == "write_file":
         if avis:
             suite = avis.get("suite", "fichier")
-            if avis.get("gemma_ok") is False:
-                return f"🛠️ DeepSeek OK, Gemma voit un défaut : {avis.get('gemma_raison', 'relire')}. Suite : {suite}"
-            return f"✅ Fichier validé (DeepSeek + Gemma). Prochaine étape : {suite}"
+            if avis.get("ok") is False:
+                return f"🛠️ Le modèle voit un défaut : {avis.get('raison', 'relire')}. Suite : {suite}"
+            return f"✅ Fichier validé. Prochaine étape : {suite}"
         return "✏️ Écriture du fichier..."
     if action == "edit_file":
         lignes = str(resultat).splitlines()
@@ -86,8 +86,6 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
         return "🧪 Test fichier exécuté."
     if action == "set_root":
         return "📂 Dossier de travail défini."
-    if action == "kimi":
-        return "🌙 Supervisor Kimi appelé."
     return f"▶️ Action : {action}"
 
 
@@ -128,7 +126,7 @@ def _verifier_done_valide(objectif: str, historique: list) -> bool:
     return True
 
 
-def _relire_finale(objectif: str, max_fix: int = 3) -> int:
+def _relire_finale(objectif: str, model_key: str, max_fix: int = 3) -> int:
     """Relecture finale automatique : lit les fichiers et corrige si vide ou cassé."""
     if _was_stopped():
         return 0
@@ -149,6 +147,7 @@ def _relire_finale(objectif: str, max_fix: int = 3) -> int:
                 [],
                 tools.get_context(max_files=10),
                 guidance=f"Le fichier {chemin} est vide ou très court. Réécris-le correctement.",
+                model_key=model_key,
             )
             if action.get("action") == "write_file":
                 _executer_action(action)
@@ -166,33 +165,11 @@ def _callback_safety(callback, tour, decision, narration):
             print(f"[callback error] {e}")
 
 
-def _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only: bool = False):
-    """Décision du prochain tour, avec option fallback complet sur Kimi."""
+def _essai_decision(objectif, historique, contexte, prompt_sup, model_key: str):
+    """Décision du prochain tour, avec le modèle choisi."""
     if _was_stopped():
         return {"pensee": "Arrêt demandé", "action": "done", "args": {"resume": "Arrêt demandé par l'utilisateur."}}
-    if kimi_only:
-        try:
-            fallback = brain.secours_kimi(
-                f"OBJECTIF : {objectif}\n\nFICHIERS :\n{contexte[:1800]}\n\n"
-                f"Ollama est indisponible. Donne la prochaine action JSON."
-            )
-            fallback["pensee"] = "[Kimi only] " + fallback.get("pensee", "")
-            return fallback
-        except Exception:
-            pass
-    try:
-        return brain.decider(objectif, historique, contexte, guidance=prompt_sup)
-    except Exception as e:
-        err = str(e).lower()
-        if "prediction aborted" in err or "token repeat" in err or "repeat limit" in err or "context length" in err:
-            print(f"[loop] Ollama ko, fallback Kimi : {e}")
-            fallback = brain.secours_kimi(
-                f"OBJECTIF : {objectif}\n\nFICHIERS :\n{contexte[:1800]}\n\n"
-                f"Ollama est bloqué. Donne la prochaine action JSON."
-            )
-            fallback["pensee"] = "[Kimi fallback] " + fallback.get("pensee", "")
-            return fallback
-        raise
+    return brain.decider(objectif, historique, contexte, guidance=prompt_sup, model_key=model_key)
 
 
 def _page_prete() -> bool:
@@ -218,7 +195,6 @@ def _detecter_boucle(historique: list) -> str:
     recent = historique[-6:]
     actions = [a.get("action") for a, _ in recent]
 
-    # Boucle list_files / read_file répétés
     if actions.count("list_files") >= 2 or actions.count("read_file") >= 3:
         fichiers = []
         for nom in tools.list_tree().splitlines()[:20]:
@@ -233,7 +209,6 @@ def _detecter_boucle(historique: list) -> str:
                 "Interdit de relire un fichier déjà lu. Si la page est déjà bonne, action done."
             )
 
-    # Boucle shell répétée avec erreur
     if actions.count("shell") >= 3:
         derniers_resultats = [str(r) for _, r in historique[-3:]]
         if any(r.startswith("ERREUR") for r in derniers_resultats):
@@ -242,7 +217,6 @@ def _detecter_boucle(historique: list) -> str:
                 "Arrête shell. Si l'objectif est atteint, appelle done. Sinon fais edit_file/read_file."
             )
 
-    # Boucle write_file/edit_file sans avancer
     ecrits = [a.get("args", {}).get("path", "") for a, _ in recent if a.get("action") in ("write_file", "edit_file")]
     if len(ecrits) >= 3 and len(set(ecrits)) == 1:
         return (
@@ -251,56 +225,6 @@ def _detecter_boucle(historique: list) -> str:
         )
 
     return ""
-
-
-def _kimi_valide(mission: str, contexte: str) -> tuple[bool, str]:
-    """Demande à Kimi s'il valide le travail. Renvoie (valide, reponse_texte).
-
-    Règle : un seul mot négatif dans le texte invalide la validation.
-    Kimi doit dire explicitement ok/done/validé SANS aucune réserve.
-    """
-    try:
-        reponse = brain.kimi_final_review(mission, contexte)
-        texte_bas = reponse.lower()
-
-        positifs = ["ok", "done", "validé", "validée", "terminé", "terminée", "fini", "prêt", "correct"]
-        negatifs = [
-            "pas", "non", "mais", "manque", "erreur", "bug", "bugs", "incomplet",
-            "problème", "problèmes", "refus", "attend", "doit", "devrait", "améliorer",
-            "corriger", "fix", "fixer", "invalide", "incorrect", "défaut", "défauts",
-            "absent", "absente", "manquant", "manquante", "vide", "placeholder",
-            "inachevé", "partiel", "fragment", "buggé", "cassé", "fail", "failed",
-        ]
-
-        # Un négatif quelque part -> non valide
-        for n in negatifs:
-            if re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç0-9]){re.escape(n)}(?:[^a-zàâäéèêëïîôùûüç0-9]|$)", texte_bas):
-                return False, reponse
-
-        # Il faut au moins un positif explicite
-        valide = any(
-            re.search(rf"(?:^|[^a-zàâäéèêëïîôùûüç0-9]){re.escape(p)}(?:[^a-zàâäéèêëïîôùûüç0-9]|$)", texte_bas)
-            for p in positifs
-        )
-        return valide, reponse
-    except Exception as e:
-        return False, f"Erreur appel Kimi: {e}"
-
-
-def _snapshot_pour_kimi(mission: str, historique: list, derniere_erreur: str = "") -> str:
-    """Construit un résumé clair pour Kimi : objectif + fichiers + dernière erreur."""
-    lignes = [f"MISSION : {mission}", "", "FICHIERS :"]
-    fichiers = []
-    for nom in tools.list_tree().splitlines():
-        if nom.strip() and not nom.endswith("/"):
-            fichiers.append(nom.strip())
-    lignes.append(", ".join(fichiers[:30]) or "(vide)")
-    if derniere_erreur:
-        lignes.extend(["", f"DERNIÈRE ERREUR / BLOCAGE : {derniere_erreur}"])
-    lignes.append("")
-    lignes.append("Si le travail est complètement terminé ET fonctionnel, réponds UNIQUEMENT 'ok' ou 'done'. "
-                  "Si le moindre point est à corriger, dis NON et liste 1 à 3 actions concrètes.")
-    return "\n".join(lignes)
 
 
 def _run_cycle(
@@ -312,9 +236,8 @@ def _run_cycle(
     callback: Callable,
     max_tours: int,
     continu: bool,
-    guidance_kimi: str,
     description_continu: str,
-    kimi_only: bool = False,
+    model_key: str,
 ):
     for tour_in_cycle in range(1, CYCLE_SIZE + 1):
         tour_abs = start_tour + tour_in_cycle - 1
@@ -323,16 +246,9 @@ def _run_cycle(
 
         if STOP_FLAG["stop"]:
             _callback_safety(callback, tour_abs, {"action": "done", "args": {}}, "🛑 Arrêt demandé.")
-            return True, tour_abs, guidance_kimi, True
+            return True, tour_abs, True
 
         contexte = tools.get_context(max_files=30)
-
-        # Kimi supervisor exactement aux tours 10, 20, 30...
-        if tour_abs % CYCLE_SIZE == 0 and tour_abs > 0 and not kimi_only:
-            gui = brain.kimi_supervise(tour_abs, objectif, historique, contexte)
-            if gui:
-                guidance_kimi = gui
-                _callback_safety(callback, tour_abs, {"action": "kimi", "args": {}}, "🌙 Kimi supervisor appelé. Intègre son guidage maintenant.")
 
         prompt_sup = ""
         if continu:
@@ -340,14 +256,11 @@ def _run_cycle(
                 f"\n\nMODE CONTINU : {description_continu}. "
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
-        if guidance_kimi:
-            prompt_sup += f"\n\nGUIDAGE KIMI : {guidance_kimi}"
-            guidance_kimi = ""  # consommé immédiatement
 
-        # Injection mémoire : derniers retours Kimi sur cette mission
+        # Injection mémoire : derniers retours sur cette mission
         feedbacks = memory.get_latest_kimi_feedback(objectif, limit=3)
         if feedbacks:
-            prompt_sup += "\n\nDERNIERS CONSEILS KIMI MÉMORISÉS :\n"
+            prompt_sup += "\n\nDERNIERS CONSEILS MÉMORISÉS :\n"
             for tour, fichier, erreur, conseil in feedbacks:
                 prompt_sup += f"- tour {tour} [{fichier}] erreur={erreur[:100]} ; conseil={conseil[:250]}\n"
             prompt_sup += "Applique ces conseils si pertinent.\n"
@@ -364,7 +277,7 @@ def _run_cycle(
                 "args": {"resume": "Site déjà en place. J'arrête de relire index.html."},
             }
         else:
-            decision = _essai_decision(objectif, historique, contexte, prompt_sup, kimi_only=kimi_only)
+            decision = _essai_decision(objectif, historique, contexte, prompt_sup, model_key)
 
         # Empêcher les actions inutiles sur fichiers verrouillés
         if decision.get("action") in ("write_file", "edit_file"):
@@ -401,28 +314,22 @@ def _run_cycle(
                     except Exception:
                         pass
 
-        # Double contrôle après un write_file : DeepSeek puis Gemma
+        # Le modèle vérifie son propre fichier après write_file (solo)
         avis = None
-        suite = ""
-        if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR") and not kimi_only:
+        if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR"):
             chemin = decision.get("args", {}).get("path", "")
             if chemin:
                 contenu = tools.read_file(chemin)
-                avis = brain.controler(objectif, chemin, contenu)
-                # Gemma relit aussi, mais seulement si elle est fonctionnelle
-                gemma_avis = brain.relire_gemma(objectif, chemin, contenu)
-                avis["gemma_ok"] = gemma_avis.get("ok", True)
-                avis["gemma_raison"] = gemma_avis.get("raison", "")
+                avis = brain.controler(objectif, chemin, contenu, model_key=model_key)
                 _verrouiller(chemin, verrou)
                 suite = avis.get("suite", "done")
                 if suite.lower() == chemin.lower():
                     suite = ""
 
-                # Si Gemma trouve un bug, on force immédiatement une correction au prochain tour
-                if avis.get("gemma_ok") is False:
-                    guidance_kimi = (
-                        f"Le fichier {chemin} a été validé par DeepSeek mais Gemma voit un défaut : "
-                        f"{avis.get('gemma_raison')}. Corrige immédiatement ce fichier en utilisant edit_file."
+                if avis.get("ok") is False:
+                    prompt_sup = (
+                        f"Le fichier {chemin} a un défaut : {avis.get('raison')}. "
+                        "Corrige immédiatement ce fichier en utilisant edit_file."
                     )
 
         narration = _narrer(tour_abs, start_cycle, decision.get("action", "?"), resultat, avis)
@@ -434,9 +341,9 @@ def _run_cycle(
         _callback_safety(callback, tour_abs, decision, narration)
 
         if decision.get("action") == "done":
-            return True, tour_abs, guidance_kimi, False
+            return True, tour_abs, False
 
-    return False, tour_abs, guidance_kimi, _was_stopped()
+    return False, tour_abs, _was_stopped()
 
 
 def boucle(
@@ -445,6 +352,7 @@ def boucle(
     commit_chaque: int = 5,
     callback: Callable = None,
     continu: bool = False,
+    model_key: str = "gemma",
 ):
     historique = []
     verrou = set()
@@ -464,12 +372,8 @@ def boucle(
             tools.initialize_root(m.group(0).strip().split()[0].rstrip("\\.,;:"))
 
     tour_courant = 1
-    guidance_kimi = ""
     termine = False
     cycle = 1
-    nb_commits = 0
-    kimi_only = False
-    ollama_failures = 0
 
     # Reset stop flag au démarrage
     STOP_FLAG["stop"] = False
@@ -481,12 +385,7 @@ def boucle(
         if STOP_FLAG["stop"]:
             break
 
-        # Si Ollama a planté plusieurs fois, passer entièrement sur Kimi
-        if not kimi_only and ollama_failures >= 2:
-            print("[loop] bascule définitive sur Kimi pour le reste de la mission")
-            kimi_only = True
-
-        termine, dernier_tour, guidance_kimi, stopped = _run_cycle(
+        termine, dernier_tour, stopped = _run_cycle(
             objectif,
             historique,
             verrou,
@@ -495,19 +394,11 @@ def boucle(
             callback,
             max_tours,
             continu,
-            guidance_kimi,
             description_continu,
-            kimi_only=kimi_only,
+            model_key=model_key,
         )
         if stopped:
             break
-
-        # Détection d'échec Ollama récurrent
-        recent = historique[-10:]
-        ollama_failures = sum(
-            1 for a, _ in recent
-            if "[Kimi fallback]" in str(a.get("pensee", "")) or "[Kimi only]" in str(a.get("pensee", ""))
-        )
 
         if not termine:
             cycle += 1
@@ -519,11 +410,10 @@ def boucle(
                 msg = f"agent: tour {tour_courant}"
                 res = tools.commit_push(msg)
                 _callback_safety(callback, tour_courant, {"action": "commit_push", "args": {"message": msg}}, f"💾 {res[:100]}")
-                nb_commits += 1
             except Exception as e:
                 print(f"[commit auto] {e}")
 
-    # Si arrêt demandé, on s'arrête immédiatement sans validation finale Kimi
+    # Si arrêt demandé, on s'arrête immédiatement
     if _was_stopped():
         final_msg = "Mission arrêtée par l'utilisateur."
         if callback:
@@ -531,11 +421,11 @@ def boucle(
         return
 
     # Relecture finale optionnelle
-    fixes = _relire_finale(objectif)
+    fixes = _relire_finale(objectif, model_key)
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
-    # Le mot ok de Kimi ne termine pas la mission. Seul un test réussi compte.
+    # Le mot ok ne termine pas la mission. Seul un test réussi compte.
     test_ok = _test_reussi(historique)
     if _was_stopped():
         final_msg = "Mission arrêtée par l'utilisateur."
