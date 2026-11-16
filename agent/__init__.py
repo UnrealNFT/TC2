@@ -1,8 +1,12 @@
-"""Agent autonome TrappistCode : cerveau LLM local + outils projet + daemon continu."""
+"""Agent autonome TrappistCode : cerveau LLM + outils projet + daemon continu.
 
-# Branche le trio (plan Kimi, juge avant done, budget, revue finale).
-# Pour revenir à l'ancien comportement : commenter le bloc ci-dessous.
-try:
-    from . import branche  # noqa: F401
-except Exception as _e:  # le bot doit démarrer même si le branchement casse
-    print(f"[agent] trio non branché : {_e}")
+Mode SOLO par défaut : un seul modèle travaille à la fois, sans relais.
+Le trio (plan Kimi + juge) n'est PAS branché automatiquement.
+Pour le réactiver temporairement : from agent import branche
+"""
+
+# Le trio n'est plus branché par défaut. Le mode solo est le comportement standard.
+# try:
+#     from . import branche  # noqa: F401
+# except Exception as _e:
+#     print(f"[agent] trio non branché : {_e}")
