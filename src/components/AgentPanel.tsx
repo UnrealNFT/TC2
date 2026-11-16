@@ -26,6 +26,13 @@ interface AgentStatus {
   tours: Tour[]
 }
 
+interface ModelOption {
+  key: string
+  label: string
+  type: string
+  description: string
+}
+
 type Mode = 'agent' | 'ask'
 
 // Backend unifié (FastAPI) : tout passe par le port 4269
@@ -34,6 +41,7 @@ const STATUS_URL = `${API_BASE}/agent/status`
 const RUN_URL = `${API_BASE}/agent/run`
 const STOP_URL = `${API_BASE}/agent/stop`
 const ASK_URL = `${API_BASE}/ask`
+const MODELS_URL = `${API_BASE}/models`
 
 export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
   const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
@@ -42,6 +50,8 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [tourCount, setTourCount] = useState(0)
+  const [selectedModel, setSelectedModel] = useState('gemma')
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([])
   const cancelRef = useRef(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
@@ -49,6 +59,13 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Récupère la liste des modèles disponibles
+  useEffect(() => {
+    axios.get<{ models: ModelOption[] }>(MODELS_URL, { timeout: 5000 })
+      .then(({ data }) => setModelOptions(data.models || []))
+      .catch(() => setModelOptions([]))
+  }, [])
 
   const stopPoll = () => {
     if (pollRef.current) {
@@ -112,7 +129,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     setRunning(true)
     setInput('')
     push({ role: 'user', text: mission })
-    push({ role: 'system', text: 'Agent local démarré…' })
+    push({ role: 'system', text: `Agent ${selectedModel} démarré…` })
     startPoll()
 
     try {
@@ -120,7 +137,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
       const fullMission = ctx ? `${mission}\n\nCONTEXTE:\n${ctx}` : mission
       const { data } = await axios.post<{ resume: string; status: string; tours: Tour[] }>(
         RUN_URL,
-        { objectif: fullMission, workspace: workspace || '', max_tours: 20 },
+        { objectif: fullMission, workspace: workspace || '', max_tours: 20, model: selectedModel },
         { timeout: 600_000 },
       )
       setTourCount(data.tours?.length || 0)
@@ -168,6 +185,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
         history: previous,
         file_content: fileContent || '',
         file_path: openPath || '',
+        model: selectedModel,
       }, { timeout: 120_000 })
       const answer = data.final || data.response || 'Pas de réponse'
       updateLast('system', { text: 'Réponse reçue', meta: { status: 'ok' } })
@@ -205,6 +223,8 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
+  const currentModelLabel = modelOptions.find(m => m.key === selectedModel)?.label || selectedModel
+
   return (
     <div style={styles.container}>
       <div style={styles.header}>
@@ -212,6 +232,9 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           <span style={{ color: 'var(--tc-primary)', fontWeight: 600 }}>Trappist Agent</span>
           <span style={{ ...styles.badge, backgroundColor: running ? 'var(--tc-primary)' : 'var(--tc-bg-elevated)', color: running ? 'var(--tc-bg)' : 'var(--tc-text-muted)' }}>
             {running ? `running t${tourCount}` : 'idle'}
+          </span>
+          <span style={{ ...styles.badge, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-text-muted)' }} title={currentModelLabel}>
+            {selectedModel}
           </span>
           {kimiEnabled && <span style={{ ...styles.badge, backgroundColor: '#0a3a2a', color: 'var(--tc-primary)' }}>Kimi</span>}
         </div>
@@ -224,7 +247,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
             <strong>Trappist Agent</strong><br />
             <strong>Ask</strong> : discussion avec mémoire du workspace.<br />
             <strong>Agent</strong> : exécute des actions sur les fichiers.<br />
-            L'historique est sauvegardé par projet.
+            Choisis un modèle ci-dessous, comme dans Copilot.
           </div>
         )}
         {messages.map((msg) => {
@@ -258,6 +281,20 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
             Agent
           </button>
         </div>
+        <select
+          value={selectedModel}
+          onChange={(e) => setSelectedModel(e.target.value)}
+          style={styles.modelSelect}
+          title="Choisir le modèle (solo, comme Copilot)"
+          disabled={loading || running}
+        >
+          {modelOptions.length === 0 && <option value="gemma">Gemma 4 12B (local)</option>}
+          {modelOptions.map((m) => (
+            <option key={m.key} value={m.key} title={m.description}>
+              {m.label}
+            </option>
+          ))}
+        </select>
         <input
           type="text"
           value={input}
@@ -369,6 +406,17 @@ const styles: Record<string, React.CSSProperties> = {
   modeActive: {
     backgroundColor: 'var(--tc-primary)',
     color: 'var(--tc-bg)',
+  },
+  modelSelect: {
+    backgroundColor: 'var(--tc-bg-elevated)',
+    border: '1px solid var(--tc-border)',
+    borderRadius: '4px',
+    padding: '6px 8px',
+    color: 'var(--tc-text)',
+    fontFamily: "'Courier New', Consolas, monospace",
+    fontSize: '11px',
+    outline: 'none',
+    maxWidth: '140px',
   },
   input: {
     flex: 1,
