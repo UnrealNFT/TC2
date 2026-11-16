@@ -163,7 +163,7 @@ def _objet_json(texte: str) -> dict:
     """Extrait le premier objet JSON complet dans un texte."""
     if not texte:
         return {}
-    texte = re.sub(r"\\`\\`\\`(?:json)?", "", texte).strip()
+    texte = re.sub(r"\`\`\`(?:json)?", "", texte).strip()
     start = texte.find("{")
     while start != -1:
         depth = 0
