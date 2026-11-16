@@ -257,14 +257,6 @@ def _run_cycle(
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
 
-        # Injection mémoire : derniers retours sur cette mission
-        feedbacks = memory.get_latest_kimi_feedback(objectif, limit=3)
-        if feedbacks:
-            prompt_sup += "\n\nDERNIERS CONSEILS MÉMORISÉS :\n"
-            for tour, fichier, erreur, conseil in feedbacks:
-                prompt_sup += f"- tour {tour} [{fichier}] erreur={erreur[:100]} ; conseil={conseil[:250]}\n"
-            prompt_sup += "Applique ces conseils si pertinent.\n"
-
         # Détection anti-boucle
         anti_boucle = _detecter_boucle(historique)
         if anti_boucle:
