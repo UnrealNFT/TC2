@@ -74,18 +74,6 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
     }
   }
 
-  const askKimiReview = async (mission: string, lastTourText: string): Promise<string> => {
-    if (!kimiEnabled) return ''
-    try {
-      const { text } = await callWaveSpeed(
-        `Mission: ${mission}\n\nDernier retour agent local:\n${lastTourText.slice(0, 2000)}\n\nDonne un diagnostic court (1-3 phrases) et un re-prompt très concret si bloqué, sinon dis "OK".`,
-      )
-      return text
-    } catch (e: any) {
-      return `❌ Kimi: ${e.message || 'erreur'}`
-    }
-  }
-
   const startPoll = () => {
     stopPoll()
     pollRef.current = setInterval(async () => {
@@ -150,13 +138,6 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
 
       updateLast('system', { text: summary, meta: { status: data.status } })
       push({ role: 'agent', text: summary })
-
-      if (kimiEnabled && needsKimi(summary)) {
-        const kimiReview = await askKimiReview(mission, summary)
-        if (kimiReview && !kimiReview.toLowerCase().startsWith('ok')) {
-          push({ role: 'kimi', text: kimiReview })
-        }
-      }
     } catch (e: any) {
       const err = e?.response?.data?.detail || e.message || 'Erreur inconnue'
       push({ role: 'error', text: `Erreur agent: ${err}` })
