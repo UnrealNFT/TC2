@@ -18,6 +18,9 @@ CYCLE_SIZE = 10
 # Flag global d'arrêt demandé par l'utilisateur
 STOP_FLAG = {"stop": False}
 
+# Actions qui modifient le workspace
+ACTIONS_ECRITURE = ("write_file", "edit_file", "append_file", "delete_file", "copy_file", "rename_file", "move_file", "delete", "mkdir")
+
 
 def request_stop():
     """Appelé par le serveur /agent/stop."""
@@ -26,6 +29,11 @@ def request_stop():
 
 def _was_stopped() -> bool:
     return STOP_FLAG["stop"]
+
+
+def _a_ecrit(historique: list) -> bool:
+    """Vrai si l'agent a modifié au moins un fichier pendant la mission."""
+    return any(a.get("action") in ACTIONS_ECRITURE for a, _ in historique)
 
 
 def _executer_action(action: dict) -> str:
@@ -108,19 +116,21 @@ def _test_reussi(historique: list) -> bool:
 
 def _verifier_done_valide(objectif: str, historique: list) -> bool:
     """Empêche un done prématuré si des fichiers vitaux semblent manquants ou vides."""
-    ecrits = set()
-    for action, _ in historique:
-        if action.get("action") in ("write_file", "edit_file"):
-            ecrits.add(action.get("args", {}).get("path", "").lower())
+    try:
+        ecrits = set()
+        for action, _ in historique:
+            if action.get("action") in ("write_file", "edit_file"):
+                ecrits.add(action.get("args", {}).get("path", "").lower())
 
-    obj = objectif.lower()
-    if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
-        if "index.html" not in ecrits and not tools.exists_file("index.html"):
-            return False
-        contenu = tools.read_file("index.html")
-        if not contenu or len(contenu.strip()) < 50:
-            return False
-
+        obj = brain.message_utilisateur(objectif).lower()
+        if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
+            if "index.html" not in ecrits and not tools.exists_file("index.html"):
+                return False
+            contenu = tools.read_file("index.html")
+            if not contenu or len(contenu.strip()) < 50:
+                return False
+    except Exception:
+        return True
     return True
 
 
@@ -172,9 +182,12 @@ def _essai_decision(objectif, historique, contexte, prompt_sup, model_key: str):
 
 def _page_prete() -> bool:
     """Vrai si index.html est déjà une vraie page, pas un brouillon."""
-    if not tools.exists_file("index.html"):
+    try:
+        if not tools.exists_file("index.html"):
+            return False
+        contenu = tools.read_file("index.html") or ""
+    except Exception:
         return False
-    contenu = tools.read_file("index.html") or ""
     bas = contenu.lower()
     return len(contenu.strip()) >= 400 and "<body" in bas and "</html>" in bas
 
@@ -201,10 +214,10 @@ def _detecter_boucle(historique: list) -> str:
         if fichiers:
             return (
                 "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
-                "Tu dois AGIR maintenant avec edit_file ou write_file. "
+                "Si l'utilisateur pose une question, réponds maintenant avec done(resume). "
+                "Sinon AGIS avec edit_file ou write_file. "
                 f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
-                "Si tu veux corriger un fichier existant, utilise edit_file(path, old_string, new_string). "
-                "Interdit de relire un fichier déjà lu. Si la page est déjà bonne, action done."
+                "Interdit de relire un fichier déjà lu."
             )
 
     if actions.count("shell") >= 3:
@@ -237,30 +250,27 @@ def _run_cycle(
     description_continu: str,
     model_key: str,
 ):
+    tour_abs = start_tour
+    question = brain.est_question(objectif)
     for tour_in_cycle in range(1, CYCLE_SIZE + 1):
         tour_abs = start_tour + tour_in_cycle - 1
         if tour_abs > max_tours or _was_stopped():
             break
 
-        if STOP_FLAG["stop"]:
-            _callback_safety(callback, tour_abs, {"action": "done", "args": {}}, "🛑 Arrêt demandé.")
-            return True, tour_abs, True
-
         contexte = tools.get_context(max_files=30)
 
         prompt_sup = ""
-        if continu:
+        if continu and not question:
             prompt_sup = (
                 f"\n\nMODE CONTINU : {description_continu}. "
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
 
-        # Détection anti-boucle
         anti_boucle = _detecter_boucle(historique)
         if anti_boucle:
             prompt_sup += anti_boucle
 
-        if _tour_en_lecture(historique) and _page_prete():
+        if not question and _tour_en_lecture(historique) and _page_prete():
             decision = {
                 "pensee": "La page est déjà construite. Inutile de la relire.",
                 "action": "done",
@@ -269,7 +279,10 @@ def _run_cycle(
         else:
             decision = _essai_decision(objectif, historique, contexte, prompt_sup, model_key)
 
-        # Empêcher les actions inutiles sur fichiers verrouillés
+        # Mode question : aucune écriture autorisée
+        if question and decision.get("action") in ACTIONS_ECRITURE + ("commit_push", "shell"):
+            decision = brain.repondre_sur_projet(objectif, contexte, model_key=model_key)
+
         if decision.get("action") in ("write_file", "edit_file"):
             chemin = decision.get("args", {}).get("path", "")
             if chemin and _est_verrouille(chemin, verrou):
@@ -277,8 +290,8 @@ def _run_cycle(
                 decision["action"] = "list_files"
                 decision["args"] = {}
 
-        # Bloquer un done prématuré, sauf si la page est déjà une vraie page
-        if decision.get("action") == "done" and not _page_prete():
+        # done refusé seulement si l'agent a écrit des fichiers sans les tester
+        if decision.get("action") == "done" and _a_ecrit(historique) and not _page_prete():
             if not _test_reussi(historique):
                 decision["pensee"] = "done refusé: aucun test réussi."
                 decision["action"] = "test_project"
@@ -293,7 +306,6 @@ def _run_cycle(
         else:
             resultat = _executer_action(decision)
 
-        # Normalise index.html -> racine si besoin
         if decision.get("action") == "write_file":
             chemin = decision.get("args", {}).get("path", "")
             if chemin and chemin.lower().endswith("index.html"):
@@ -304,7 +316,6 @@ def _run_cycle(
                     except Exception:
                         pass
 
-        # Le modèle vérifie son propre fichier après write_file (solo)
         avis = None
         if decision.get("action") == "write_file" and not str(resultat).startswith("ERREUR"):
             chemin = decision.get("args", {}).get("path", "")
@@ -312,15 +323,6 @@ def _run_cycle(
                 contenu = tools.read_file(chemin)
                 avis = brain.controler(objectif, chemin, contenu, model_key=model_key)
                 _verrouiller(chemin, verrou)
-                suite = avis.get("suite", "done")
-                if suite.lower() == chemin.lower():
-                    suite = ""
-
-                if avis.get("ok") is False:
-                    prompt_sup = (
-                        f"Le fichier {chemin} a un défaut : {avis.get('raison')}. "
-                        "Corrige immédiatement ce fichier en utilisant edit_file."
-                    )
 
         narration = _narrer(tour_abs, start_cycle, decision.get("action", "?"), resultat, avis)
 
@@ -347,25 +349,22 @@ def boucle(
     historique = []
     verrou = set()
 
-    obj = objectif.lower()
+    obj = brain.message_utilisateur(objectif).lower()
     description_continu = "j'ajoute des fonctionnalités au projet"
     for mot, desc in CONTINU_DESCRIPTIONS.items():
         if mot in obj:
             description_continu = desc
             break
 
-    chemin = objectif
-    if isinstance(chemin, str):
-        import re
-        m = re.search(r"[A-Za-z]:\\[^\r\n\"']+", chemin)
-        if m:
-            tools.initialize_root(m.group(0).strip().split()[0].rstrip("\\.,;:"))
+    # Chemin donné dans le message de l'utilisateur (pas dans le CONTEXTE)
+    m = re.search(r"[A-Za-z]:\\[^\r\n\"']+", brain.message_utilisateur(objectif))
+    if m:
+        tools.initialize_root(m.group(0).strip().split()[0].rstrip("\\.,;:"))
 
     tour_courant = 1
     termine = False
     cycle = 1
 
-    # Reset stop flag au démarrage
     STOP_FLAG["stop"] = False
 
     while tour_courant <= max_tours and not termine:
@@ -373,16 +372,8 @@ def boucle(
             break
 
         termine, dernier_tour, stopped = _run_cycle(
-            objectif,
-            historique,
-            verrou,
-            tour_courant,
-            cycle,
-            callback,
-            max_tours,
-            continu,
-            description_continu,
-            model_key=model_key,
+            objectif, historique, verrou, tour_courant, cycle, callback,
+            max_tours, continu, description_continu, model_key=model_key,
         )
         if stopped:
             break
@@ -391,8 +382,8 @@ def boucle(
             cycle += 1
             tour_courant = dernier_tour + 1
 
-        # Commit auto tous les N tours
-        if tour_courant % commit_chaque == 0 and termine is False:
+        # Commit auto tous les N tours, seulement si des fichiers ont changé
+        if _a_ecrit(historique) and tour_courant % commit_chaque == 0 and termine is False:
             try:
                 msg = f"agent: tour {tour_courant}"
                 res = tools.commit_push(msg)
@@ -400,29 +391,24 @@ def boucle(
             except Exception as e:
                 print(f"[commit auto] {e}")
 
-    # Si arrêt demandé, on s'arrête immédiatement
     if _was_stopped():
-        final_msg = "Mission arrêtée par l'utilisateur."
-        if callback:
-            _callback_safety(callback, 0, {"action": "done", "args": {}}, f"🛑 {final_msg}")
+        _callback_safety(callback, 0, {"action": "stop", "args": {}}, "🛑 Mission arrêtée par l'utilisateur.")
         return
 
-    # Relecture finale optionnelle
+    # Rien n'a été écrit (question / lecture) : la réponse du done suffit, pas de relecture ni de verdict.
+    if not _a_ecrit(historique):
+        return
+
     fixes = _relire_finale(objectif, model_key)
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
-    # Le mot ok ne termine pas la mission. Seul un test réussi compte.
-    test_ok = _test_reussi(historique)
-    if _was_stopped():
-        final_msg = "Mission arrêtée par l'utilisateur."
-    elif test_ok:
+    if _test_reussi(historique):
         final_msg = "Mission terminée. Un test a réussi."
     else:
-        final_msg = "Arrêt sans test réussi. done refusé."
-
-    if callback:
-        _callback_safety(callback, 0, {"action": "done", "args": {}}, f"Résumé final : {final_msg}")
+        final_msg = "Fichiers modifiés, mais aucun test n'a réussi."
+    # action "summary" (pas "done") : n'écrase pas la réponse de l'agent côté backend
+    _callback_safety(callback, 0, {"action": "summary", "args": {}}, f"Résumé final : {final_msg}")
 
 
 def _log(data: dict):
