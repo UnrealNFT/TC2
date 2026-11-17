@@ -2,6 +2,8 @@
 """Boucle principale de l'agent : cycles, narration, tests.
 
 Mode SOLO : un seul modèle fait tout (plan, code, tests, relecture).
+Mode QUESTION : si l'utilisateur pose une question, l'agent lit le projet,
+répond via done(resume) et n'écrit rien.
 """
 import json
 import os
@@ -10,6 +12,7 @@ from typing import Callable
 
 from . import tools
 from . import brain
+from . import question as q
 
 
 # Nombre de tours par cycle
@@ -122,7 +125,7 @@ def _verifier_done_valide(objectif: str, historique: list) -> bool:
             if action.get("action") in ("write_file", "edit_file"):
                 ecrits.add(action.get("args", {}).get("path", "").lower())
 
-        obj = brain.message_utilisateur(objectif).lower()
+        obj = q.message_utilisateur(objectif).lower()
         if "html" in obj or "site" in obj or "jeu" in obj or "game" in obj or "three" in obj:
             if "index.html" not in ecrits and not tools.exists_file("index.html"):
                 return False
@@ -214,10 +217,9 @@ def _detecter_boucle(historique: list) -> str:
         if fichiers:
             return (
                 "\n\n⚠️ TU AS DÉJÀ FAIT TROP DE list_files/read_file D'AFFILÉE. "
-                "Si l'utilisateur pose une question, réponds maintenant avec done(resume). "
-                "Sinon AGIS avec edit_file ou write_file. "
+                "Tu dois AGIR maintenant avec edit_file ou write_file. "
                 f"Fichiers existants ({len(fichiers)}) : {', '.join(fichiers[:10])}. "
-                "Interdit de relire un fichier déjà lu."
+                "Interdit de relire un fichier déjà lu. Si la page est déjà bonne, action done."
             )
 
     if actions.count("shell") >= 3:
@@ -251,7 +253,6 @@ def _run_cycle(
     model_key: str,
 ):
     tour_abs = start_tour
-    question = brain.est_question(objectif)
     for tour_in_cycle in range(1, CYCLE_SIZE + 1):
         tour_abs = start_tour + tour_in_cycle - 1
         if tour_abs > max_tours or _was_stopped():
@@ -260,7 +261,7 @@ def _run_cycle(
         contexte = tools.get_context(max_files=30)
 
         prompt_sup = ""
-        if continu and not question:
+        if continu:
             prompt_sup = (
                 f"\n\nMODE CONTINU : {description_continu}. "
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
@@ -270,7 +271,7 @@ def _run_cycle(
         if anti_boucle:
             prompt_sup += anti_boucle
 
-        if not question and _tour_en_lecture(historique) and _page_prete():
+        if _tour_en_lecture(historique) and _page_prete():
             decision = {
                 "pensee": "La page est déjà construite. Inutile de la relire.",
                 "action": "done",
@@ -278,10 +279,6 @@ def _run_cycle(
             }
         else:
             decision = _essai_decision(objectif, historique, contexte, prompt_sup, model_key)
-
-        # Mode question : aucune écriture autorisée
-        if question and decision.get("action") in ACTIONS_ECRITURE + ("commit_push", "shell"):
-            decision = brain.repondre_sur_projet(objectif, contexte, model_key=model_key)
 
         if decision.get("action") in ("write_file", "edit_file"):
             chemin = decision.get("args", {}).get("path", "")
@@ -338,6 +335,17 @@ def _run_cycle(
     return False, tour_abs, _was_stopped()
 
 
+def _repondre_question(objectif: str, callback: Callable, model_key: str):
+    """Mode question : 1 appel modèle, lecture du projet, aucune écriture."""
+    try:
+        contexte = tools.get_context(max_files=30)
+    except Exception as e:
+        contexte = f"(projet illisible : {e})"
+    decision = q.repondre_sur_projet(objectif, contexte, model_key=model_key)
+    _log({"tour": 1, "cycle": 1, "action": "done", "mode": "question", "resultat": decision["args"]["resume"][:300]})
+    _callback_safety(callback, 1, decision, "💬 Réponse (aucun fichier modifié).")
+
+
 def boucle(
     objectif: str,
     max_tours: int = 20,
@@ -346,26 +354,32 @@ def boucle(
     continu: bool = False,
     model_key: str = "gemma",
 ):
+    STOP_FLAG["stop"] = False
+    message = q.message_utilisateur(objectif)
+
+    # Chemin donné dans le message de l'utilisateur (pas dans le CONTEXTE)
+    m = re.search(r"[A-Za-z]:\\[^\r\n\"']+", message)
+    if m:
+        tools.initialize_root(m.group(0).strip().split()[0].rstrip("\\.,;:"))
+
+    # Question => réponse directe, jamais de write
+    if not continu and q.est_question(objectif):
+        _repondre_question(objectif, callback, model_key)
+        return
+
     historique = []
     verrou = set()
 
-    obj = brain.message_utilisateur(objectif).lower()
+    obj = message.lower()
     description_continu = "j'ajoute des fonctionnalités au projet"
     for mot, desc in CONTINU_DESCRIPTIONS.items():
         if mot in obj:
             description_continu = desc
             break
 
-    # Chemin donné dans le message de l'utilisateur (pas dans le CONTEXTE)
-    m = re.search(r"[A-Za-z]:\\[^\r\n\"']+", brain.message_utilisateur(objectif))
-    if m:
-        tools.initialize_root(m.group(0).strip().split()[0].rstrip("\\.,;:"))
-
     tour_courant = 1
     termine = False
     cycle = 1
-
-    STOP_FLAG["stop"] = False
 
     while tour_courant <= max_tours and not termine:
         if STOP_FLAG["stop"]:
@@ -395,7 +409,7 @@ def boucle(
         _callback_safety(callback, 0, {"action": "stop", "args": {}}, "🛑 Mission arrêtée par l'utilisateur.")
         return
 
-    # Rien n'a été écrit (question / lecture) : la réponse du done suffit, pas de relecture ni de verdict.
+    # Rien n'a été écrit : la réponse du done suffit, pas de relecture ni de verdict.
     if not _a_ecrit(historique):
         return
 
