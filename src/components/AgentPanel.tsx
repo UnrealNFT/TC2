@@ -41,7 +41,14 @@ const STOP_URL = `${API_BASE}/agent/stop`
 const ASK_URL = `${API_BASE}/ask`
 const MODELS_URL = `${API_BASE}/models`
 
-export function AgentPanel({ workspace, openPath, fileContent }: AgentPanelProps) {
+// Extrait le plus long bloc de code d une reponse (souvent le fichier complet).
+function extractCode(text: string): string | null {
+  const blocks = [...text.matchAll(/```[^\n]*\n([\s\S]*?)```/g)].map((m) => m[1])
+  if (blocks.length === 0) return null
+  return blocks.reduce((a, b) => (b.length > a.length ? b : a)).replace(/\n$/, '')
+}
+
+export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: AgentPanelProps) {
   const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<Mode>('ask')
@@ -174,6 +181,13 @@ export function AgentPanel({ workspace, openPath, fileContent }: AgentPanelProps
     }
   }
 
+  const applyToFile = (code: string) => {
+    if (!openPath) return
+    if (!window.confirm(`Remplacer le contenu de ${openPath} par ce code ?`)) return
+    onApplyEdit(code)
+    push({ role: 'system', text: `Code appliqué à ${openPath}.` })
+  }
+
   const submit = () => {
     if (mode === 'agent') {
       void runAgent()
@@ -231,11 +245,17 @@ export function AgentPanel({ workspace, openPath, fileContent }: AgentPanelProps
         {messages.map((msg) => {
           const color = msg.role === 'user' ? 'var(--tc-text)' : msg.role === 'error' ? 'var(--tc-danger)' : 'var(--tc-text-muted)'
           const bg = msg.role === 'user' ? 'var(--tc-selected)' : 'var(--tc-bg-elevated)'
+          const code = msg.role === 'agent' && openPath ? extractCode(msg.text) : null
           const label = msg.role === 'user' ? 'You' : msg.role === 'agent' ? 'Agent' : msg.role === 'error' ? 'Erreur' : '•'
           return (
             <div key={msg.id} style={{ ...styles.message, backgroundColor: bg, borderColor: msg.role === 'error' ? 'var(--tc-danger)' : 'var(--tc-border)' }}>
               <div style={{ ...styles.label, color }}>{label}</div>
               <div style={{ color: 'var(--tc-text)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{msg.text}</div>
+              {code && (
+                <button onClick={() => applyToFile(code)} title={`Remplacer ${openPath}`} style={{ marginTop: 6, padding: '3px 8px', fontSize: 11, cursor: 'pointer', backgroundColor: 'var(--tc-primary)', color: 'var(--tc-bg)', border: 'none', borderRadius: 4 }}>
+                  Appliquer au fichier
+                </button>
+              )}
             </div>
           )
         })}
