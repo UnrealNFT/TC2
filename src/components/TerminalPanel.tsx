@@ -19,8 +19,9 @@ export function TerminalPanel() {
 
     try {
       const res = await localApi.runShell(cmd)
-      if (res.stdout) setLines((prev) => [...prev, res.stdout])
-      if (res.stderr) setLines((prev) => [...prev, `stderr: ${res.stderr}`])
+      const { stdout, stderr } = res
+      if (stdout) setLines((prev) => [...prev, stdout])
+      if (stderr) setLines((prev) => [...prev, `stderr: ${stderr}`])
       setLines((prev) => [...prev, `[exit ${res.code ?? '?'}]`])
     } catch (e: any) {
       setLines((prev) => [...prev, `❌ ${e.response?.data?.error || e.message}`])

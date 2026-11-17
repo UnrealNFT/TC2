@@ -46,12 +46,12 @@ export const localApi = {
   listFiles(path: string = '') {
     ensureBase()
     return axios.get(`${API}/api/files/list${params({ path, base })}`)
-      .then((r) => r.data as Array<{ name: string; path: string; type: string }>)
+      .then((r) => r.data as Array<{ name: string; path: string; type: 'dir' | 'file' }>)
   },
 
   listAt(path: string) {
     return axios.get(`${API}/api/files/list${params({ path: '', base: path })}`)
-      .then((r) => r.data as Array<{ name: string; path: string; type: string }>)
+      .then((r) => r.data as Array<{ name: string; path: string; type: 'dir' | 'file' }>)
   },
 
   readFile(path: string): Promise<FileData> {

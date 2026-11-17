@@ -38,7 +38,7 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
     ...(status?.deleted || []).map((p) => ({ path: p, state: 'deleted' as const })),
   ]
 
-  const act = async (action: () => Promise<void>) => {
+  const act = async (action: () => Promise<unknown>) => {
     setLoading(true)
     try {
       await action()

@@ -1,10 +1,5 @@
 import { localApi } from './localApi'
 
-interface SnapshotFile {
-  path: string
-  content: string
-}
-
 const MAX_SIZE = 200_000 // 200KB par fichier
 const MAX_TOTAL = 1_000_000 // 1MB total
 

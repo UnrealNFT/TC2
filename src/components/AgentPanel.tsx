@@ -41,7 +41,7 @@ const STOP_URL = `${API_BASE}/agent/stop`
 const ASK_URL = `${API_BASE}/ask`
 const MODELS_URL = `${API_BASE}/models`
 
-export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: AgentPanelProps) {
+export function AgentPanel({ workspace, openPath, fileContent }: AgentPanelProps) {
   const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<Mode>('ask')
@@ -166,7 +166,7 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: Ag
         file_path: openPath || '',
         model: selectedModel,
       }, { timeout: 120_000 })
-      const answer = data.final || data.response || 'Pas de réponse'
+      const answer = data.final || 'Pas de réponse'
       updateLast('system', { text: 'Réponse reçue', meta: { status: 'ok' } })
       push({ role: 'agent', text: answer })
     } catch (e: any) {
