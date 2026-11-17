@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import axios from 'axios'
 import { useChatHistory } from '../hooks/useChatHistory'
-import { callWaveSpeed, needsKimi } from '../services/agentModels'
 import type React from 'react'
 
 interface AgentPanelProps {
@@ -12,7 +11,6 @@ interface AgentPanelProps {
   fileContent: string
   onApplyEdit: (content: string) => void
   workspace: string
-  kimiEnabled: boolean
 }
 
 interface Tour {
@@ -43,7 +41,7 @@ const STOP_URL = `${API_BASE}/agent/stop`
 const ASK_URL = `${API_BASE}/ask`
 const MODELS_URL = `${API_BASE}/models`
 
-export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimiEnabled }: AgentPanelProps) {
+export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: AgentPanelProps) {
   const { messages, push, clear, updateLast, historyForLLM } = useChatHistory(workspace || '__global__')
   const [input, setInput] = useState('')
   const [mode, setMode] = useState<Mode>('ask')
@@ -217,7 +215,6 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           <span style={{ ...styles.badge, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-text-muted)' }} title={currentModelLabel}>
             {selectedModel}
           </span>
-          {kimiEnabled && <span style={{ ...styles.badge, backgroundColor: '#0a3a2a', color: 'var(--tc-primary)' }}>Kimi</span>}
         </div>
         <button onClick={clear} style={styles.clearBtn} title="Effacer l'historique">🗑</button>
       </div>
@@ -232,9 +229,9 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit, kimi
           </div>
         )}
         {messages.map((msg) => {
-          const color = msg.role === 'user' ? 'var(--tc-text)' : msg.role === 'error' ? 'var(--tc-danger)' : msg.role === 'kimi' ? '#7ee787' : 'var(--tc-text-muted)'
+          const color = msg.role === 'user' ? 'var(--tc-text)' : msg.role === 'error' ? 'var(--tc-danger)' : 'var(--tc-text-muted)'
           const bg = msg.role === 'user' ? 'var(--tc-selected)' : 'var(--tc-bg-elevated)'
-          const label = msg.role === 'user' ? 'You' : msg.role === 'agent' ? 'Agent' : msg.role === 'kimi' ? 'Kimi' : msg.role === 'error' ? 'Erreur' : '•'
+          const label = msg.role === 'user' ? 'You' : msg.role === 'agent' ? 'Agent' : msg.role === 'error' ? 'Erreur' : '•'
           return (
             <div key={msg.id} style={{ ...styles.message, backgroundColor: bg, borderColor: msg.role === 'error' ? 'var(--tc-danger)' : 'var(--tc-border)' }}>
               <div style={{ ...styles.label, color }}>{label}</div>

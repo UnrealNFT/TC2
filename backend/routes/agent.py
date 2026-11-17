@@ -1,6 +1,6 @@
 """Routes de l'agent IA (port de server.py).
 
-Mêmes chemins que server.py (/ask, /agent/*, /kimi, /files/read|write) pour que
+Mêmes chemins que server.py (/ask, /agent/*, /files/read|write) pour que
 le frontend n'ait qu'à changer d'URL (port 8000 -> port unique) à l'étape 5.
 Le package `agent/` reste à la racine du repo pour l'instant.
 """
@@ -12,7 +12,6 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
-import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -64,10 +63,6 @@ class TaskBody(BaseModel):
     objectif: str
     workspace: Optional[str] = ""
     max_tours: Optional[int] = 20
-
-
-class KimiBody(BaseModel):
-    question: str
 
 
 class FileWriteBody(BaseModel):
@@ -199,34 +194,3 @@ async def task(body: TaskBody):
         )
         return {"status": "started", "tours": state.tours}
     return {"status": "queued", "detail": "Agent occupé, tâche mise en file d'attente."}
-
-
-@router.post("/kimi")
-async def kimi_review(body: KimiBody):
-    """Proxy vers WaveSpeed (évite le CORS côté navigateur)."""
-    api_key = os.getenv("WAVESPEED_API_KEY") or os.getenv("VITE_WAVESPEED_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="Clé WaveSpeed non configurée sur le serveur.")
-
-    def _call() -> str:
-        r = requests.post(
-            "https://llm.wavespeed.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            json={
-                "model": os.getenv("WAVESPEED_MODEL", "moonshotai/kimi-k2.7-code"),
-                "messages": [
-                    {"role": "system", "content": "Tu es un architecte senior. Réponds en français avec un plan court et des étapes concrètes. Pas de code complet."},
-                    {"role": "user", "content": body.question[:4000]},
-                ],
-                "max_tokens": 800,
-                "temperature": 0.4,
-            },
-            timeout=60,
-        )
-        r.raise_for_status()
-        return str(r.json().get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
-
-    try:
-        return {"text": await asyncio.to_thread(_call)}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Erreur WaveSpeed: {e}")

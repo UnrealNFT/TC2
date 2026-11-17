@@ -7,7 +7,7 @@ IDE local + IA locale pour TrappistLand.
 - React 19 + TypeScript + Vite
 - CodeMirror 6
 - Express + simple-git (backend IDE, port 4269)
-- FastAPI Python `server.py` (agent IA + Kimi/WaveSpeed, port 8000)
+- FastAPI Python `server.py` (agent IA : Ollama local + WaveSpeed, port 8000)
 - Theme TrappistAI (noir / vert `#00ff41`)
 
 ## Démarrage rapide
@@ -80,7 +80,16 @@ L'agent de l'IDE appelle le serveur Python :
 - Mission autonome : `POST /agent/run` (envoie `workspace`)
 - Status live : `GET /agent/status`
 
-Depuis l'interface : active "Kimi review" dans les paramètres pour que Kimi intervienne quand DeepSeek est bloqué.
+Mode solo, comme GitHub Copilot : tu choisis un modèle dans le panneau Agent et il travaille seul du début à la fin, sans relais vers un autre modèle.
+
+Modèles disponibles (`GET /models`, définis dans `agent/models.py`) :
+
+| Clé | Modèle | Type |
+|---|---|---|
+| `gemma` (défaut) | Gemma 4 12B | Ollama, local |
+| `deepseek` | DeepSeek-Qwen 9B | Ollama, local |
+| `kimi` | Kimi K2.7 | WaveSpeed, en ligne |
+| `glm` | GLM 5.3 Flash | WaveSpeed, en ligne |
 
 ## Fonctionnalités
 
@@ -93,4 +102,4 @@ Depuis l'interface : active "Kimi review" dans les paramètres pour que Kimi int
 7. **Preview** live pour les fichiers HTML
 8. **Agent IA local** + mode autonome
 9. **Export / import ZIP** du workspace
-10. **Intégration GitHub** (token) + Kimi review
+10. **Intégration GitHub** (token)

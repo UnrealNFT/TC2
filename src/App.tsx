@@ -33,7 +33,6 @@ function App() {
   const [githubToken, setGithubToken] = useState('')
   const [isTokenValid, setIsTokenValid] = useState(false)
   const [selectedRepo, setSelectedRepo] = useState<string | null>(null)
-  const [kimiEnabled, setKimiEnabled] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
 
   useEffect(() => {
@@ -285,11 +284,6 @@ function App() {
     <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Configuration</div>
 
-      <label style={styles.check}>
-        <input type="checkbox" checked={kimiEnabled} onChange={(e) => setKimiEnabled(e.target.checked)} />
-        Activer Kimi review
-      </label>
-
       <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)', marginTop: 8 }}>GitHub Token</label>
       <input
         type="password"
@@ -346,7 +340,6 @@ function App() {
           </span>
           {activePath && <span style={{ ...styles.badge, color: 'var(--tc-text-muted)' }} title={activePath}>📁 {activePath.split(/[/\\]/).pop()}</span>}
           {isTokenValid && <span style={{ ...styles.badge, color: '#58a6ff', borderColor: '#58a6ff' }}>🐙 GitHub</span>}
-          {kimiEnabled && <span style={{ ...styles.badge, color: '#7ee787', borderColor: '#7ee787' }}>🌙 Kimi</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           {isPreviewable && (
@@ -441,7 +434,6 @@ function App() {
                   fileContent={activeContent}
                   onApplyEdit={applyEdit}
                   workspace={activePath}
-                  kimiEnabled={kimiEnabled}
                 />
               ) : (
                 <TerminalPanel />
