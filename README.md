@@ -53,7 +53,7 @@ npm run start
 Copie `.env.example` en `.env` et adapte :
 
 ```env
-WAVESPEED_API_KEY=wsk_live_9ZQB7Jv9Yh6dfdfdsfsfsdfXHDDvXhK8rtCsTQiwM
+WAVESPEED_API_KEY=wsk_live_xxxxxxxxxxxxxxxxxxxx
 WAVESPEED_MODEL=moonshotai/kimi-k2.7-code
 PORT=4269
 TRAPPIST_WORKSPACE=C:\Users\Djaf\TrappistWorkspaces

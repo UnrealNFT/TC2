@@ -45,3 +45,6 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+
+# logs serveur locaux
+_srv_*.txt
