@@ -3,7 +3,6 @@
 
 Architecture SOLO (type Copilot) :
 - Chaque modèle travaille seul : il planifie, écrit, teste et se relit lui-même.
-- Aucun relais automatique vers Kimi ou un autre modèle.
 - Le modèle est choisi par l'utilisateur via model_key (voir agent/models.py).
 
 Stratégie VRAM Ollama :
@@ -13,11 +12,6 @@ import json, re, os, urllib.request
 import ollama
 
 from . import models
-
-# Noms exacts de ollama list (conservés pour référence, le choix se fait via models.py)
-MODELE_CERVEAU = models.MODELES["gemma"]["id"]
-MODELE_RELECTEUR = models.MODELES["deepseek"]["id"]
-MODELE_KIMI = models.MODELES["kimi"]["id"]
 
 # Actions supportées par tools.py. Le modèle NE doit PAS en inventer d'autres.
 SYSTEM_CODER = """Tu es un agent de code autonome (TrappistCode).

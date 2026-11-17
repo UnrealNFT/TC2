@@ -2,7 +2,6 @@
 """Boucle principale de l'agent : cycles, narration, tests.
 
 Mode SOLO : un seul modèle fait tout (plan, code, tests, relecture).
-Aucun relais automatique vers Kimi ou un autre modèle.
 """
 import json
 import os
@@ -11,7 +10,6 @@ from typing import Callable
 
 from . import tools
 from . import brain
-from . import memory
 
 
 # Nombre de tours par cycle
@@ -369,9 +367,6 @@ def boucle(
 
     # Reset stop flag au démarrage
     STOP_FLAG["stop"] = False
-
-    # Initialisation mémoire
-    memory.init()
 
     while tour_courant <= max_tours and not termine:
         if STOP_FLAG["stop"]:
