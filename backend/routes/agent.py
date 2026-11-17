@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import List, Optional
 
@@ -27,6 +28,7 @@ class AgentState:
     running = False
     tours: list[dict] = []
     workspace = ""
+    error = ""
     lock = threading.Lock()
 
 
@@ -72,20 +74,41 @@ class FileWriteBody(BaseModel):
 
 
 def _callback(tour: int, decision: dict, narration: str):
-    state.tours.append({"tour": tour, "action": decision.get("action"), "pensee": narration})
+    args = decision.get("args") or {}
+    resume = str(args.get("resume") or "") if decision.get("action") == "done" else ""
+    state.tours.append({
+        "tour": tour,
+        "action": decision.get("action"),
+        # Pour un done, on montre la vraie réponse de l'agent plutôt que "Mission terminée"
+        "pensee": resume or narration,
+        "resume": resume,
+    })
 
 
 def _run_agent(objectif: str, workspace: str, max_tours: int, continu: bool, model: str = "gemma"):
     with state.lock:
         state.running = True
         state.tours.clear()
+        state.error = ""
     try:
-        if workspace:
-            tools.initialize_root(workspace)
-            state.workspace = workspace
-        loop.boucle(objectif, max_tours=max_tours, callback=_callback, continu=continu, model_key=model)
+        if not workspace:
+            raise RuntimeError("Aucun workspace ouvert. Ouvre un dossier projet avant de lancer l'agent.")
+        tools.initialize_root(workspace)
+        state.workspace = workspace
+        loop.boucle(objectif, max_tours=max_tours, callback=_callback, continu=continu, model_key=model or "gemma")
+    except Exception as e:  # jamais de 500 brute : le front reçoit un message lisible
+        traceback.print_exc()
+        state.error = str(e) or e.__class__.__name__
     finally:
         state.running = False
+
+
+def _resume_final() -> str:
+    """Dernière vraie réponse (args.resume d'un done), sinon dernière pensée."""
+    for t in reversed(state.tours):
+        if t.get("resume"):
+            return t["resume"]
+    return state.tours[-1]["pensee"] if state.tours else "Terminé."
 
 
 def _build_context(file_path: str, file_content: str, workspace: str) -> str:
@@ -154,7 +177,7 @@ async def ask(body: AskBody):
 
         messages = [m for m in session[-MAX_ASK_HISTORY:] if m["role"] in ("user", "assistant")]
         contexte = _build_context(body.file_path or "", body.file_content or "", session_key)
-        answer = await asyncio.to_thread(repondre_conversation, messages, body.question, contexte, body.model)
+        answer = await asyncio.to_thread(repondre_conversation, messages, body.question, contexte, body.model or "gemma")
 
         session.append({"role": "user", "content": body.question})
         session.append({"role": "assistant", "content": answer})
@@ -169,15 +192,16 @@ async def run_agent(body: RunBody):
     if state.running:
         raise HTTPException(status_code=409, detail="Un agent est déjà en cours d'exécution.")
     await asyncio.get_running_loop().run_in_executor(
-        executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, body.continu, body.model,
+        executor, _run_agent, body.objectif, body.workspace or "", body.max_tours or 20, bool(body.continu), body.model or "gemma",
     )
-    summary = state.tours[-1]["pensee"] if state.tours else "Terminé."
-    return {"resume": summary, "status": "ok", "tours": state.tours}
+    if state.error:
+        return {"resume": f"Erreur agent : {state.error}", "status": "error", "tours": state.tours}
+    return {"resume": _resume_final(), "status": "ok", "tours": state.tours}
 
 
 @router.get("/agent/status")
 async def agent_status():
-    return {"running": state.running, "tours": state.tours, "workspace": state.workspace}
+    return {"running": state.running, "tours": state.tours, "workspace": state.workspace, "error": state.error}
 
 
 @router.post("/agent/stop")
@@ -190,7 +214,7 @@ async def stop_agent():
 async def task(body: TaskBody):
     if not state.running:
         await asyncio.get_running_loop().run_in_executor(
-            executor, _run_agent, body.objectif, body.workspace or "", body.max_tours, False, "gemma",
+            executor, _run_agent, body.objectif, body.workspace or "", body.max_tours or 20, False, "gemma",
         )
-        return {"status": "started", "tours": state.tours}
+        return {"status": "started", "tours": state.tours, "error": state.error}
     return {"status": "queued", "detail": "Agent occupé, tâche mise en file d'attente."}
