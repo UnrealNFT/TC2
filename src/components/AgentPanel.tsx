@@ -126,7 +126,11 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: Ag
     startPoll()
 
     try {
-      const ctx = openPath ? `Fichier ouvert: ${openPath}\n\n${fileContent.slice(0, 2000)}` : ''
+      // On n'envoie plus d'extrait tronqué du fichier (coupé en plein milieu, l'agent le recopiait tel quel).
+      // On donne seulement le chemin : l'agent lit le fichier complet lui-même avec read_file.
+      const ctx = openPath
+        ? `Fichier actuellement ouvert dans l'éditeur : ${openPath} (utilise read_file pour lire son contenu complet si nécessaire).`
+        : ''
       const fullMission = ctx ? `${mission}\n\nCONTEXTE:\n${ctx}` : mission
       const { data } = await axios.post<{ resume: string; status: string; tours: Tour[] }>(
         RUN_URL,
