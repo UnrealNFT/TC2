@@ -13,7 +13,36 @@ router = APIRouter(prefix="/api/git", tags=["git"])
 
 
 class GitError(Exception):
-    pass
+    def __init__(self, message: str, status_code: int = 400):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+# Messages git bruts -> explication lisible pour l'utilisateur
+_TRADUCTIONS = [
+    (("does not appear to be a git repository", "no configured push destination", "no such remote"),
+     "Aucun remote configuré. Crée un repo sur GitHub puis : git remote add origin https://github.com/<toi>/<repo>.git"),
+    (("nothing to commit", "nothing added to commit", "no changes added to commit"),
+     "Rien à committer : modifie un fichier puis clique sur « Stage all » avant de committer."),
+    (("has no upstream branch",),
+     "La branche n'a pas d'upstream. Lance une fois : git push -u origin <branche>"),
+    (("authentication failed", "could not read username", "permission denied", "403"),
+     "Authentification GitHub refusée : vérifie ton token / tes identifiants git."),
+    (("rejected", "fetch first", "non-fast-forward"),
+     "Push refusé : le remote a des commits que tu n'as pas. Fais un Pull d'abord."),
+    (("please tell me who you are", "unable to auto-detect email"),
+     "Identité git manquante : git config --global user.name \"Nom\" et git config --global user.email \"mail\""),
+    (("conflict",),
+     "Conflit de fusion : résous les conflits dans les fichiers puis committe."),
+]
+
+
+def _traduire(brut: str) -> str:
+    bas = brut.lower()
+    for motifs, message in _TRADUCTIONS:
+        if any(m in bas for m in motifs):
+            return f"{message}\n(git : {brut.splitlines()[0][:200]})"
+    return brut
 
 
 def run_git(base: Path, *args: str) -> str:
@@ -28,11 +57,12 @@ def run_git(base: Path, *args: str) -> str:
             timeout=120,
         )
     except FileNotFoundError as e:
-        raise GitError("git introuvable dans le PATH") from e
+        raise GitError("git introuvable dans le PATH", 500) from e
     except subprocess.TimeoutExpired as e:
-        raise GitError(f"git {' '.join(args)} : timeout") from e
+        raise GitError(f"git {' '.join(args)} : timeout", 504) from e
     if proc.returncode != 0:
-        raise GitError((proc.stderr or proc.stdout).strip() or f"git {' '.join(args)} a échoué")
+        brut = (proc.stderr or proc.stdout).strip() or f"git {' '.join(args)} a échoué"
+        raise GitError(_traduire(brut))
     return proc.stdout
 
 
@@ -99,6 +129,8 @@ async def status(request: Request):
 async def diff(request: Request):
     p = await get_params(request)
     base = require_base(p)
+    if not is_repo(base):
+        return {"diff": ""}
     args = ["diff"] + (["--", p["path"]] if p.get("path") else [])
     return {"diff": run_git(base, *args)}
 
@@ -106,6 +138,8 @@ async def diff(request: Request):
 @router.get("/diff-staged")
 async def diff_staged(request: Request):
     base = require_base(await get_params(request))
+    if not is_repo(base):
+        return {"diff": ""}
     return {"diff": run_git(base, "diff", "--cached")}
 
 
@@ -136,21 +170,36 @@ async def commit(request: Request):
     return {"ok": True, "commit": sha}
 
 
+def _verifier_remote(base: Path, remote: str):
+    remotes = run_git(base, "remote").split()
+    if remote not in remotes:
+        raise GitError(
+            f"Aucun remote « {remote} » configuré. Crée un repo sur GitHub puis : "
+            f"git remote add {remote} https://github.com/<toi>/<repo>.git"
+        )
+
+
 @router.post("/push")
 async def push(request: Request):
     p = await get_params(request)
-    run_git(require_base(p), "push", p.get("remote") or "origin", p.get("branch") or "HEAD")
+    base = require_base(p)
+    remote = p.get("remote") or "origin"
+    _verifier_remote(base, remote)
+    run_git(base, "push", remote, p.get("branch") or "HEAD")
     return {"ok": True}
 
 
 @router.post("/pull")
 async def pull(request: Request):
     p = await get_params(request)
-    args = ["pull", p.get("remote") or "origin"]
+    base = require_base(p)
+    remote = p.get("remote") or "origin"
+    _verifier_remote(base, remote)
+    args = ["pull", remote]
     branch = p.get("branch")
     if branch and branch != "current":
         args.append(branch)
-    run_git(require_base(p), *args)
+    run_git(base, *args)
     return {"ok": True}
 
 

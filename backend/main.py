@@ -43,7 +43,8 @@ async def _workspace_error(_req: Request, exc: WorkspaceError):
 
 @app.exception_handler(GitError)
 async def _git_error(_req: Request, exc: GitError):
-    return JSONResponse(status_code=500, content={"error": str(exc)})
+    # 400 par défaut : erreur "métier" git (pas de remote, rien à committer...), pas un crash serveur
+    return JSONResponse(status_code=getattr(exc, "status_code", 400), content={"error": str(exc)})
 
 
 @app.exception_handler(Exception)
