@@ -61,8 +61,8 @@ export function Sidebar({ view, onChangeView, extra }: SidebarProps) {
         onMouseLeave={() => setHover(null)}
         style={{
           ...styles.actBtn,
-          color: active || hover === id ? '#ffffff' : 'rgba(255,255,255,0.4)',
-          borderLeft: active ? '2px solid #ffffff' : '2px solid transparent',
+          color: active || hover === id ? 'var(--tc-primary)' : 'var(--tc-text-dim)',
+          borderLeft: active ? '2px solid var(--tc-primary)' : '2px solid transparent',
         }}
       >
         {ICONS[id]}

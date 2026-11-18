@@ -437,8 +437,8 @@ function App() {
                       onClick={() => setBottomTab(t)}
                       style={{
                         ...styles.panelTab,
-                        color: bottomTab === t ? '#e7e7e7' : 'var(--tc-text-muted)',
-                        borderBottom: bottomTab === t ? '1px solid #e7e7e7' : '1px solid transparent',
+                        color: bottomTab === t ? 'var(--tc-primary)' : 'var(--tc-text-muted)',
+                        borderBottom: bottomTab === t ? '1px solid var(--tc-primary)' : '1px solid transparent',
                       }}
                     >
                       {t === 'agent' ? 'Agent' : 'Terminal'}
@@ -467,13 +467,13 @@ function App() {
         </div>
       </div>
 
-      <div style={{ ...styles.statusBar, backgroundColor: activePath ? '#007acc' : '#68217a' }}>
+      <div style={{ ...styles.statusBar, backgroundColor: 'var(--tc-statusbar)' }}>
         <div style={styles.statusSide}>
           <span style={styles.statusItem} title={activePath || ''}>
             {activePath ? `📁 ${workspaceName}` : 'Aucun dossier ouvert'}
           </span>
           <span
-            style={{ ...styles.statusItem, backgroundColor: backendOk === false ? '#c72e0f' : 'transparent' }}
+            style={{ ...styles.statusItem, backgroundColor: backendOk === false ? 'var(--tc-danger)' : 'transparent' }}
             title="Backend local (port 4269)"
           >
             {backendOk === null ? '… backend' : backendOk ? '● backend' : '⚠ backend OFF'}
@@ -558,7 +558,7 @@ const styles: Record<string, React.CSSProperties> = {
   settingTitle: {
     fontSize: 13,
     fontWeight: 600,
-    color: '#e7e7e7',
+    color: 'var(--tc-primary)',
   },
   label: {
     fontSize: 12,
@@ -567,7 +567,7 @@ const styles: Record<string, React.CSSProperties> = {
   input: {
     backgroundColor: 'var(--tc-input)',
     color: 'var(--tc-text)',
-    border: '1px solid transparent',
+    border: '1px solid var(--tc-border)',
     borderRadius: 2,
     padding: '4px 6px',
     fontSize: 13,
@@ -582,8 +582,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
   },
   btnSecondary: {
-    backgroundColor: '#3a3d41',
-    color: '#ffffff',
+    backgroundColor: 'var(--tc-bg-elevated)',
+    color: 'var(--tc-primary)',
     border: 'none',
     borderRadius: 2,
     padding: '5px 8px',
@@ -595,18 +595,19 @@ const styles: Record<string, React.CSSProperties> = {
     bottom: 34,
     right: 16,
     maxWidth: 420,
-    backgroundColor: '#252526',
+    backgroundColor: 'var(--tc-bg-elevated)',
     color: 'var(--tc-text)',
-    border: '1px solid #454545',
+    border: '1px solid var(--tc-border)',
     borderLeft: '3px solid var(--tc-primary)',
     padding: '10px 14px',
     zIndex: 9999,
     fontSize: 13,
-    boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
+    boxShadow: 'var(--tc-glow)',
   },
   statusBar: {
     height: 22,
-    color: '#ffffff',
+    borderTop: '1px solid var(--tc-border)',
+    color: 'var(--tc-primary)',
     fontSize: 12,
     display: 'flex',
     alignItems: 'center',
@@ -631,7 +632,7 @@ const styles: Record<string, React.CSSProperties> = {
   statusBtn: {
     background: 'transparent',
     border: 'none',
-    color: '#ffffff',
+    color: 'var(--tc-primary)',
     fontSize: 12,
     padding: '0 8px',
     height: '100%',

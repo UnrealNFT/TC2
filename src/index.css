@@ -8,91 +8,92 @@ body,
   overflow: hidden;
 }
 
-/* Theme VS Code Dark+ (noms --tc-* conserves pour tous les composants) */
 :root {
-  --tc-bg: #1e1e1e;
-  --tc-bg-soft: #252526;
-  --tc-bg-elevated: #2d2d2d;
-  --tc-panel: #1e1e1e;
-  --tc-activity: #333333;
-  --tc-titlebar: #3c3c3c;
-  --tc-input: #3c3c3c;
-  --tc-border: #3c3c3c;
-  --tc-border-strong: #007acc;
-  --tc-text: #cccccc;
-  --tc-text-muted: #9d9d9d;
-  --tc-text-dim: #6e6e6e;
-  --tc-primary: #007acc;
-  --tc-primary-dark: #0062a3;
-  --tc-primary-light: #3794ff;
-  --tc-on-primary: #ffffff;
-  --tc-link: #3794ff;
-  --tc-danger: #f14c4c;
-  --tc-warning: #cca700;
-  --tc-success: #89d185;
-  --tc-accent: #007acc;
-  --tc-accent-dim: rgba(0, 122, 204, 0.15);
-  --tc-hover: #2a2d2e;
-  --tc-selected: #37373d;
-  --tc-focus: #04395e;
-  --tc-glow: none;
-  --tc-radius: 4px;
-  --tc-font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Ubuntu, sans-serif;
-  --tc-font-mono: Consolas, 'Cascadia Code', 'Courier New', monospace;
+  --tc-bg: #000000;
+  --tc-bg-soft: #0a0a0a;
+  --tc-bg-elevated: #0f0f0f;
+  --tc-panel: #111111;
+  --tc-border: rgba(0, 255, 65, 0.28);
+  --tc-border-strong: rgba(0, 255, 65, 0.55);
+  --tc-text: #e6ffe9;
+  --tc-text-muted: #7dff8c;
+  --tc-text-dim: #4db856;
+  --tc-primary: #00ff41;
+  --tc-primary-dark: #00cc33;
+  --tc-primary-light: #33ff66;
+  --tc-danger: #ff0000;
+  --tc-warning: #ffff00;
+  --tc-accent: #00ff41;
+  --tc-accent-dim: rgba(0, 255, 65, 0.12);
+  --tc-hover: rgba(0, 255, 65, 0.14);
+  --tc-selected: rgba(0, 255, 65, 0.22);
+  --tc-glow: 0 0 8px rgba(0, 255, 65, 0.45), 0 0 20px rgba(0, 255, 65, 0.22);
+  --tc-radius: 8px;
+  /* Variables ajoutees pour le layout VS Code (memes couleurs TrappistAI) */
+  --tc-activity: #050505;
+  --tc-input: #0a0a0a;
+  --tc-statusbar: #0f0f0f;
+  --tc-on-primary: #000000;
+  --tc-font-ui: 'Courier New', Consolas, monospace;
+  --tc-font-mono: 'Courier New', Consolas, monospace;
 }
 
 body {
   background-color: var(--tc-bg);
   color: var(--tc-text);
-  font-family: var(--tc-font-ui);
-  font-size: 13px;
+  font-family: 'Courier New', Consolas, monospace;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  position: relative;
+}
+
+/* Subtle scanlines over the whole UI */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: linear-gradient(
+    0deg,
+    transparent 0%,
+    rgba(0, 255, 65, 0.06) 2%,
+    rgba(0, 255, 65, 0.12) 3%,
+    rgba(0, 255, 65, 0.06) 3%,
+    transparent 100%
+  );
+  background-repeat: repeat;
+  background-size: 100% 4px;
+  opacity: 0.35;
 }
 
 * {
   box-sizing: border-box;
 }
 
-button {
-  font-family: inherit;
-}
-
-input,
-select,
-textarea {
-  font-family: inherit;
-  outline: none;
-}
-
-input:focus,
-select:focus,
-textarea:focus {
-  outline: 1px solid var(--tc-primary);
-  outline-offset: -1px;
-}
-
+/* Scrollbar TrappistAI green */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: var(--tc-bg-soft);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(121, 121, 121, 0.4);
+  background: var(--tc-primary-dark);
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 100, 100, 0.7);
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
+  background: var(--tc-primary);
 }
 
 ::selection {
-  background: #264f78;
+  background: rgba(0, 255, 65, 0.3);
+  color: var(--tc-text);
 }
