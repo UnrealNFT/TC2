@@ -133,20 +133,24 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: Ag
         { objectif: fullMission, workspace: workspace || '', max_tours: 20, model: selectedModel },
         { timeout: 600_000 },
       )
-      setTourCount(data.tours?.length || 0)
+      const nbTours = data.tours?.length || 0
+      setTourCount(nbTours)
 
-      let summary = data.resume || 'Mission terminée.'
-      if (data.tours && data.tours.length > 0) {
-        const last = data.tours[data.tours.length - 1]
-        summary = `Tour ${last.tour || data.tours.length} — ${last.action || 'terminé'}\n${last.pensee || ''}`
-      }
+      // data.resume = vraie réponse de l'agent (args.resume du done), calculée par le backend.
+      // On ne l'écrase plus avec le dernier tour (souvent le "summary" générique).
+      const summary = (data.resume || '').trim() || 'Mission terminée (aucun résumé fourni).'
+      const isError = data.status === 'error'
 
-      updateLast('system', { text: summary, meta: { status: data.status } })
-      push({ role: 'agent', text: summary })
+      // Ligne système = simple statut ; le texte complet n'est affiché qu'une fois (message agent).
+      updateLast('system', {
+        text: isError ? 'Erreur' : `Terminé en ${nbTours} tour${nbTours > 1 ? 's' : ''}`,
+        meta: { status: data.status },
+      })
+      push({ role: isError ? 'error' : 'agent', text: summary })
     } catch (e: any) {
-      const err = e?.response?.data?.detail || e.message || 'Erreur inconnue'
+      const err = e?.response?.data?.detail || e?.response?.data?.error || e.message || 'Erreur inconnue'
+      updateLast('system', { text: 'Erreur', meta: { status: 'error' } })
       push({ role: 'error', text: `Erreur agent: ${err}` })
-      updateLast('system', { text: `Erreur: ${err}`, meta: { status: 'error' } })
     } finally {
       stopPoll()
       setLoading(false)
@@ -177,7 +181,8 @@ export function AgentPanel({ workspace, openPath, fileContent, onApplyEdit }: Ag
       updateLast('system', { text: 'Réponse reçue', meta: { status: 'ok' } })
       push({ role: 'agent', text: answer })
     } catch (e: any) {
-      push({ role: 'error', text: `Erreur: ${e.message}` })
+      const err = e?.response?.data?.detail || e?.response?.data?.error || e.message
+      push({ role: 'error', text: `Erreur: ${err}` })
     }
   }
 
@@ -391,7 +396,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px',
   },
   modeBtn: {
-    background: 'transparent',
+    // backgroundColor (et pas "background") : évite le warning React avec modeActive
+    backgroundColor: 'transparent',
     border: 'none',
     color: 'var(--tc-text-muted)',
     cursor: 'pointer',
