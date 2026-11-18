@@ -8,11 +8,19 @@ interface GitPanelProps {
   refreshKey: number
 }
 
+// Extrait le vrai message renvoyé par le backend ({ error }) au lieu de "status code 400"
+function messageErreur(e: unknown): string {
+  const any = e as { response?: { data?: { error?: string; detail?: string } }; message?: string }
+  return any?.response?.data?.error || any?.response?.data?.detail || any?.message || String(e)
+}
+
 export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
   const [status, setStatus] = useState<GitStatus | null>(null)
   const [diff, setDiff] = useState('')
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(false)
+  const [erreur, setErreur] = useState('')
+  const [info, setInfo] = useState('')
 
   const load = useCallback(async () => {
     if (!activePath) return
@@ -22,7 +30,7 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
       const d = await localApi.gitDiff()
       setDiff(d)
     } catch (e) {
-      console.error(e)
+      setErreur(messageErreur(e))
       setStatus(null)
     }
   }, [activePath])
@@ -38,17 +46,35 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
     ...(status?.deleted || []).map((p) => ({ path: p, state: 'deleted' as const })),
   ]
 
-  const act = async (action: () => Promise<unknown>) => {
+  const act = async (action: () => Promise<unknown>, succes?: string) => {
     setLoading(true)
+    setErreur('')
+    setInfo('')
     try {
       await action()
+      if (succes) setInfo(succes)
       await load()
     } catch (e) {
-      console.error(e)
+      setErreur(messageErreur(e))
     } finally {
       setLoading(false)
     }
   }
+
+  const bandeaux = (
+    <>
+      {erreur && (
+        <div style={styles.error} onClick={() => setErreur('')} title="Cliquer pour fermer">
+          ⚠️ {erreur}
+        </div>
+      )}
+      {info && (
+        <div style={styles.info} onClick={() => setInfo('')} title="Cliquer pour fermer">
+          ✅ {info}
+        </div>
+      )}
+    </>
+  )
 
   if (!activePath) {
     return <div style={styles.empty}>Ouvre un dossier local pour voir Git.</div>
@@ -57,11 +83,12 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
   if (!status?.isRepo) {
     return (
       <div style={styles.container}>
+        {bandeaux}
         <div style={styles.notice}>
           Ce dossier n’est pas un repo Git.
         </div>
         <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          <button onClick={() => act(() => localApi.gitInit())} style={styles.btn} disabled={loading}>Init repo</button>
+          <button onClick={() => act(() => localApi.gitInit(), 'Repo initialisé.')} style={styles.btn} disabled={loading}>Init repo</button>
         </div>
         <div style={{ color: 'var(--tc-text-dim)', fontSize: '11px', marginTop: '10px' }}>
           Une fois initie, tu pourras stage, commit et push vers un repo GitHub.
@@ -79,11 +106,13 @@ export function GitPanel({ activePath, refreshKey }: GitPanelProps) {
         </span>
       </div>
 
+      {bandeaux}
+
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
-        <button onClick={() => act(() => localApi.gitAdd('.'))} style={styles.btn} disabled={loading}>Stage all</button>
-        <button onClick={() => act(() => localApi.gitCommit(message || 'TrappistCode update'))} style={styles.btn} disabled={loading}>Commit</button>
-        <button onClick={() => act(() => localApi.gitPush())} style={styles.btn} disabled={loading}>Push</button>
-        <button onClick={() => act(() => localApi.gitPull())} style={styles.btn} disabled={loading}>Pull</button>
+        <button onClick={() => act(() => localApi.gitAdd('.'), 'Tous les fichiers sont stagés.')} style={styles.btn} disabled={loading}>Stage all</button>
+        <button onClick={() => act(() => localApi.gitCommit(message || 'TrappistCode update'), 'Commit créé.')} style={styles.btn} disabled={loading}>Commit</button>
+        <button onClick={() => act(() => localApi.gitPush(), 'Push effectué.')} style={styles.btn} disabled={loading}>Push</button>
+        <button onClick={() => act(() => localApi.gitPull(), 'Pull effectué.')} style={styles.btn} disabled={loading}>Pull</button>
       </div>
 
       <input
@@ -147,6 +176,23 @@ const styles: Record<string, React.CSSProperties> = {
     backgroundColor: 'var(--tc-bg-elevated)',
     border: '1px solid var(--tc-border)',
     color: 'var(--tc-text-dim)',
+  },
+  error: {
+    padding: '8px 10px',
+    borderRadius: '4px',
+    border: '1px solid var(--tc-danger)',
+    color: 'var(--tc-danger)',
+    whiteSpace: 'pre-wrap',
+    cursor: 'pointer',
+    fontSize: '11px',
+  },
+  info: {
+    padding: '8px 10px',
+    borderRadius: '4px',
+    border: '1px solid var(--tc-primary)',
+    color: 'var(--tc-primary)',
+    cursor: 'pointer',
+    fontSize: '11px',
   },
   header: {
     display: 'flex',
