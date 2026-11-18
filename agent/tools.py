@@ -11,6 +11,9 @@ from . import checks
 
 ROOT = os.getcwd()
 
+# Taille max d'un fichier dans get_context (au-delà : tronqué + avertissement)
+CONTEXT_MAX_CHARS = 2000
+
 # Dossiers critiques protégés : source du programme + dossiers système Windows.
 PROTECTED_PATHS: list[str] = []
 
@@ -128,32 +131,40 @@ def read_file(path: str) -> str:
 
 
 def write_file(path: str, content: str) -> str:
+    """Crée un fichier, ou le RÉÉCRIT entièrement (l'ancien est sauvegardé en .agent.bak).
+    Utile quand edit_file échoue ou quand le fichier doit changer complètement."""
     full = _path(path)
     os.makedirs(os.path.dirname(full) or ROOT, exist_ok=True)
     if not isinstance(content, str):
         content = str(content)
 
-    if os.path.isfile(full):
-        try:
-            existing = open(full, "r", encoding="utf-8").read()
-        except Exception:
-            existing = ""
-        if existing and len(content) < max(200, len(existing) // 2):
-            return (
-                f"ERREUR: refus d'écraser {path} "
-                f"({len(existing)} car. -> {len(content)}). Utilise edit_file."
-            )
-        return f"ERREUR: {path} existe déjà. Utilise edit_file, un seul extrait."
+    existe = os.path.isfile(full)
+    if existe and len(content.strip()) < 50:
+        return (
+            f"ERREUR: contenu quasi vide ({len(content.strip())} car.), refus d'écraser {path}. "
+            "Envoie le contenu COMPLET du fichier."
+        )
 
-    # Vérification gratuite avant d'écrire un nouveau fichier
+    # Vérification gratuite avant d'écrire
     erreurs = checks.verifier(path, content)
     if erreurs:
         return _rapport_erreurs(path, erreurs).replace(
             "Relis-le avec read_file puis corrige ton edit", "Corrige le contenu puis relance write_file"
         )
 
+    backup = ""
+    if existe:
+        try:
+            backup = _backup_path(full)
+            shutil.copy2(full, backup)
+        except Exception:
+            backup = ""
+
     with open(full, "w", encoding="utf-8") as f:
         f.write(content)
+    if existe:
+        info = f", ancien sauvegardé dans {os.path.basename(backup)}" if backup else ""
+        return f"RÉÉCRIT: {path} ({len(content)} car.{info}, vérification OK)"
     return f"ÉCRIT: {path} (vérification OK)"
 
 
@@ -189,7 +200,8 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             return (
                 f"ERREUR: old_string coupe une ligne en deux dans {path}. Rien écrit.\n"
                 "Pour un remplacement sur plusieurs lignes, old_string doit contenir des LIGNES ENTIÈRES.\n"
-                f"Lignes actuelles autour de l'extrait :\n{_extrait(content, pos)}"
+                "Si tu veux remplacer tout le fichier, utilise write_file avec le contenu complet.\n"
+                f"Lignes actuelles autour de la fin de l'extrait :\n{_extrait(content, fin)}"
             )
 
     new_content = content[:pos] + new_string + content[fin:]
@@ -295,7 +307,8 @@ def list_tree(path: str = "") -> str:
 
 
 def get_context(max_files: int = 30) -> str:
-    """Récupère le contenu des fichiers sources pour donner du contexte au LLM."""
+    """Récupère le contenu des fichiers sources pour donner du contexte au LLM.
+    Les gros fichiers sont tronqués à une fin de ligne, avec un avertissement explicite."""
     files = []
     for root, _, filenames in os.walk(ROOT):
         for f in filenames:
@@ -310,9 +323,18 @@ def get_context(max_files: int = 30) -> str:
         try:
             with open(full, "r", encoding="utf-8") as f:
                 content = f.read()
-            context.append(f"--- {rel} ---\n{content[:2000]}")
         except Exception:
-            pass
+            continue
+        if len(content) > CONTEXT_MAX_CHARS:
+            coupe = content.rfind("\n", 0, CONTEXT_MAX_CHARS)
+            apercu = content[: coupe if coupe > 0 else CONTEXT_MAX_CHARS]
+            context.append(
+                f"--- {rel} (APERÇU TRONQUÉ : {len(apercu)}/{len(content)} car.) ---\n{apercu}\n"
+                f"[... SUITE NON AFFICHÉE. Ne copie pas cet aperçu dans old_string : "
+                f"fais read_file('{rel}') pour le contenu exact, ou write_file pour tout réécrire.]"
+            )
+        else:
+            context.append(f"--- {rel} ---\n{content}")
     return "\n\n".join(context)
 
 
