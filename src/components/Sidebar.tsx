@@ -1,4 +1,5 @@
 import type React from 'react'
+import { useState } from 'react'
 import type { SidebarView, Workspace } from '../types/ide'
 
 interface SidebarProps {
@@ -13,79 +14,132 @@ interface SidebarProps {
   extra: React.ReactNode
 }
 
-const items: { id: SidebarView; label: string; icon?: string }[] = [
-  { id: 'projects', label: 'Projets', icon: '📁' },
-  { id: 'files', label: 'Fichiers', icon: '🌲' },
-  { id: 'git', label: 'Git', icon: '🔀' },
-  { id: 'settings', label: 'Paramètres', icon: '⚙' },
-]
+const svg = (children: React.ReactNode) => (
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+    {children}
+  </svg>
+)
+
+const ICONS: Record<SidebarView, React.ReactNode> = {
+  files: svg(<><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>),
+  projects: svg(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />),
+  git: svg(<><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10" /><path d="M18 9c0 5-7 4-11.5 8.5" /></>),
+  settings: svg(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1" /></>),
+}
+
+const TITLES: Record<SidebarView, string> = {
+  files: 'Explorateur',
+  projects: 'Projets',
+  git: 'Contrôle de code source',
+  settings: 'Paramètres',
+}
+
+const TOP: SidebarView[] = ['files', 'projects', 'git']
 
 export function Sidebar({ view, onChangeView, extra }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false)
+  const [hover, setHover] = useState<SidebarView | null>(null)
+
+  // Comme VS Code : recliquer sur l'icone active replie la barre laterale
+  const click = (id: SidebarView) => {
+    if (id === view && !collapsed) {
+      setCollapsed(true)
+    } else {
+      setCollapsed(false)
+      onChangeView(id)
+    }
+  }
+
+  const renderBtn = (id: SidebarView) => {
+    const active = id === view && !collapsed
+    return (
+      <button
+        key={id}
+        title={TITLES[id]}
+        onClick={() => click(id)}
+        onMouseEnter={() => setHover(id)}
+        onMouseLeave={() => setHover(null)}
+        style={{
+          ...styles.actBtn,
+          color: active || hover === id ? '#ffffff' : 'rgba(255,255,255,0.4)',
+          borderLeft: active ? '2px solid #ffffff' : '2px solid transparent',
+        }}
+      >
+        {ICONS[id]}
+      </button>
+    )
+  }
+
   return (
-    <div style={styles.sidebar}>
-      <div style={styles.brand}>
-        <span style={{ color: 'var(--tc-primary)', fontWeight: 700, letterSpacing: 1 }}>TRAPPIST</span>
-        <span style={{ fontSize: '10px', color: 'var(--tc-text-dim)' }}>IDE v0.2</span>
+    <div style={styles.root}>
+      <div style={styles.activity}>
+        <div style={styles.col}>{TOP.map(renderBtn)}</div>
+        <div style={styles.col}>{renderBtn('settings')}</div>
       </div>
 
-      <div style={styles.nav}>
-        {items.map((item) => (
-          <button
-            key={item.id}
-            onClick={() => onChangeView(item.id)}
-            title={item.label}
-            style={{
-              ...styles.navBtn,
-              backgroundColor: view === item.id ? 'var(--tc-selected)' : 'transparent',
-              color: view === item.id ? 'var(--tc-primary)' : 'var(--tc-text-muted)',
-              borderBottom: view === item.id ? '2px solid var(--tc-primary)' : '2px solid transparent',
-            }}
-          >
-            <span style={{ fontSize: '14px' }}>{item.icon}</span>
-            <span>{item.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {extra}
+      {!collapsed && (
+        <div style={styles.panel}>
+          <div style={styles.header}>{TITLES[view]}</div>
+          <div style={styles.content}>{extra}</div>
+        </div>
+      )}
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  sidebar: {
-    width: '260px',
-    backgroundColor: 'var(--tc-bg-soft)',
-    borderRight: '1px solid var(--tc-border)',
+  root: {
+    display: 'flex',
+    flexShrink: 0,
+    minHeight: 0,
+  },
+  activity: {
+    width: 48,
+    backgroundColor: 'var(--tc-activity)',
     display: 'flex',
     flexDirection: 'column',
+    justifyContent: 'space-between',
+    flexShrink: 0,
+  },
+  col: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  actBtn: {
+    width: 48,
+    height: 48,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    padding: 0,
+  },
+  panel: {
+    width: 260,
+    backgroundColor: 'var(--tc-bg-soft)',
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
     overflow: 'hidden',
   },
-  brand: {
-    height: '40px',
+  header: {
+    height: 35,
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '0 12px',
-    borderBottom: '1px solid var(--tc-border)',
-    backgroundColor: 'var(--tc-bg-elevated)',
-  },
-  nav: {
-    display: 'flex',
-    borderBottom: '1px solid var(--tc-border)',
-  },
-  navBtn: {
-    flex: 1,
-    padding: '10px 2px',
-    fontSize: '11px',
-    cursor: 'pointer',
-    background: 'transparent',
-    fontFamily: "'Courier New', Consolas, monospace",
-    border: 'none',
+    padding: '0 20px',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
     color: 'var(--tc-text-muted)',
+    flexShrink: 0,
+  },
+  content: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'auto',
     display: 'flex',
     flexDirection: 'column',
-    alignItems: 'center',
-    gap: 2,
   },
 }
