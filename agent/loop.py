@@ -18,6 +18,9 @@ from . import question as q
 # Nombre de tours par cycle
 CYCLE_SIZE = 10
 
+# Nombre d'échecs edit_file consécutifs sur un même fichier avant d'imposer write_file
+MAX_ECHECS_EDIT = 2
+
 # Flag global d'arrêt demandé par l'utilisateur
 STOP_FLAG = {"stop": False}
 
@@ -36,7 +39,10 @@ def _was_stopped() -> bool:
 
 def _a_ecrit(historique: list) -> bool:
     """Vrai si l'agent a modifié au moins un fichier pendant la mission."""
-    return any(a.get("action") in ACTIONS_ECRITURE for a, _ in historique)
+    return any(
+        a.get("action") in ACTIONS_ECRITURE and not str(r).startswith("ERREUR")
+        for a, r in historique
+    )
 
 
 def _executer_action(action: dict) -> str:
@@ -74,6 +80,8 @@ def _narrer(tour: int, cycle: int, action: str, resultat: str, avis: dict = None
             return f"✅ Fichier validé. Prochaine étape : {suite}"
         return "✏️ Écriture du fichier..."
     if action == "edit_file":
+        if str(resultat).startswith("ERREUR"):
+            return "⚠️ Modification refusée : " + str(resultat).splitlines()[0][:160]
         lignes = str(resultat).splitlines()
         return "✏️ Modification ciblée.\n" + "\n".join(lignes[:16])
     if action == "read_file":
@@ -202,8 +210,33 @@ def _tour_en_lecture(historique: list) -> bool:
     return all(a in ("read_file", "list_files", "list_tree", "get_context") for a in recent)
 
 
+def _echecs_edit_consecutifs(historique: list) -> tuple:
+    """(chemin, n) : nombre d'edit_file ratés d'affilée sur le même fichier (lectures ignorées)."""
+    chemin, n = "", 0
+    for action, resultat in reversed(historique):
+        nom = action.get("action")
+        if nom in ("read_file", "list_files", "list_tree", "get_context"):
+            continue
+        if nom != "edit_file" or not str(resultat).startswith("ERREUR"):
+            break
+        p = action.get("args", {}).get("path", "")
+        if chemin and p != chemin:
+            break
+        chemin = p
+        n += 1
+    return chemin, n
+
+
 def _detecter_boucle(historique: list) -> str:
-    """Renvoie un message si le modèle tourne en rond sur list_files/read_file/shell."""
+    """Renvoie un message si le modèle tourne en rond sur list_files/read_file/shell/edit_file."""
+    chemin_ko, n_ko = _echecs_edit_consecutifs(historique)
+    if chemin_ko and n_ko >= MAX_ECHECS_EDIT:
+        return (
+            f"\n\n⚠️ edit_file A ÉCHOUÉ {n_ko} FOIS D'AFFILÉE SUR {chemin_ko}. "
+            "N'utilise PLUS edit_file sur ce fichier. "
+            f"Utilise write_file avec le contenu COMPLET et corrigé de {chemin_ko}."
+        )
+
     if len(historique) < 4:
         return ""
     recent = historique[-6:]
@@ -266,6 +299,11 @@ def _run_cycle(
                 f"\n\nMODE CONTINU : {description_continu}. "
                 "N'appelle jamais done. Continue à enrichir le projet déjà existant."
             )
+        elif tour_abs >= max_tours - 2:
+            prompt_sup = (
+                f"\n\n⏱️ IL TE RESTE {max_tours - tour_abs + 1} TOUR(S). "
+                "Termine l'essentiel puis appelle done avec un résumé honnête de ce qui est fait et de ce qui reste."
+            )
 
         anti_boucle = _detecter_boucle(historique)
         if anti_boucle:
@@ -279,6 +317,21 @@ def _run_cycle(
             }
         else:
             decision = _essai_decision(objectif, historique, contexte, prompt_sup, model_key)
+
+        # Garde-fou dur : edit_file interdit sur un fichier où il vient d'échouer plusieurs fois
+        chemin_ko, n_ko = _echecs_edit_consecutifs(historique)
+        if (
+            decision.get("action") == "edit_file"
+            and n_ko >= MAX_ECHECS_EDIT
+            and decision.get("args", {}).get("path", "") == chemin_ko
+        ):
+            resultat_bloque = (
+                f"ERREUR: edit_file bloqué sur {chemin_ko} après {n_ko} échecs. "
+                f"Utilise write_file avec le contenu complet de {chemin_ko}."
+            )
+            historique.append((decision, resultat_bloque))
+            _callback_safety(callback, tour_abs, decision, f"🚧 edit_file bloqué sur {chemin_ko} : réécriture complète demandée.")
+            continue
 
         if decision.get("action") in ("write_file", "edit_file"):
             chemin = decision.get("args", {}).get("path", "")
@@ -346,6 +399,16 @@ def _repondre_question(objectif: str, callback: Callable, model_key: str):
     _callback_safety(callback, 1, decision, "💬 Réponse (aucun fichier modifié).")
 
 
+def _fichiers_modifies(historique: list) -> list:
+    vus = []
+    for a, r in historique:
+        if a.get("action") in ("write_file", "edit_file") and not str(r).startswith("ERREUR"):
+            p = a.get("args", {}).get("path", "")
+            if p and p not in vus:
+                vus.append(p)
+    return vus
+
+
 def boucle(
     objectif: str,
     max_tours: int = 20,
@@ -409,20 +472,35 @@ def boucle(
         _callback_safety(callback, 0, {"action": "stop", "args": {}}, "🛑 Mission arrêtée par l'utilisateur.")
         return
 
-    # Rien n'a été écrit : la réponse du done suffit, pas de relecture ni de verdict.
+    limite_atteinte = not termine and not continu
+    modifies = _fichiers_modifies(historique)
+
+    # Rien n'a été écrit : la réponse du done suffit, sauf si la limite a coupé l'agent.
     if not _a_ecrit(historique):
+        if limite_atteinte:
+            _callback_safety(
+                callback, 0, {"action": "summary", "args": {}},
+                f"⏱️ Limite de {max_tours} tours atteinte sans terminer. Aucun fichier modifié. "
+                "Reformule la demande ou augmente max_tours.",
+            )
         return
 
     fixes = _relire_finale(objectif, model_key)
     if fixes:
         _log({"tour": 0, "cycle": cycle, "action": "final_review", "pensee": f"Relecture finale : {fixes} fichier(s) corrigé(s)."})
 
-    if _test_reussi(historique):
-        final_msg = "Mission terminée. Un test a réussi."
+    liste = ", ".join(modifies[:8]) if modifies else "aucun"
+    if limite_atteinte:
+        final_msg = (
+            f"⏱️ Limite de {max_tours} tours atteinte : l'agent n'a PAS terminé la mission. "
+            f"Fichiers modifiés : {liste}. Relance l'agent pour qu'il continue."
+        )
+    elif _test_reussi(historique):
+        final_msg = f"Mission terminée. Un test a réussi. Fichiers modifiés : {liste}."
     else:
-        final_msg = "Fichiers modifiés, mais aucun test n'a réussi."
+        final_msg = f"Fichiers modifiés ({liste}), mais aucun test n'a réussi."
     # action "summary" (pas "done") : n'écrase pas la réponse de l'agent côté backend
-    _callback_safety(callback, 0, {"action": "summary", "args": {}}, f"Résumé final : {final_msg}")
+    _callback_safety(callback, 0, {"action": "summary", "args": {"limite": limite_atteinte}}, f"Résumé final : {final_msg}")
 
 
 def _log(data: dict):
