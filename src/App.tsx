@@ -17,6 +17,7 @@ type BottomTab = 'agent' | 'terminal'
 
 const FILES_KEY = 'trappistcode-openfiles'
 const ACTIVE_FILE_KEY = 'trappistcode-activefile'
+const PANEL_H_KEY = 'trappistcode-panel-height'
 
 function App() {
   const { workspaces, activePath, addWorkspace, removeWorkspace, setActive } = useWorkspace()
@@ -27,6 +28,8 @@ function App() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [showBottom, setShowBottom] = useState(true)
   const [bottomTab, setBottomTab] = useState<BottomTab>('agent')
+  const [panelHeight, setPanelHeight] = useState<number>(() => Number(localStorage.getItem(PANEL_H_KEY)) || 280)
+  const [resizing, setResizing] = useState(false)
   const [backendOk, setBackendOk] = useState<boolean | null>(null)
   const [showPreview, setShowPreview] = useState(false)
   const [previewKey, setPreviewKey] = useState(0)
@@ -42,6 +45,24 @@ function App() {
     }, 10_000)
     return () => clearInterval(id)
   }, [])
+
+  // Raccourcis VS Code : Ctrl+J (panneau) et Ctrl+` (terminal)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      if (e.key.toLowerCase() === 'j' || e.code === 'Backquote') {
+        e.preventDefault()
+        if (e.code === 'Backquote') setBottomTab('terminal')
+        setShowBottom((s) => !s)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  useEffect(() => {
+    localStorage.setItem(PANEL_H_KEY, String(panelHeight))
+  }, [panelHeight])
 
   useEffect(() => {
     if (!activePath) return
@@ -67,6 +88,26 @@ function App() {
       localStorage.setItem(`${ACTIVE_FILE_KEY}::${activePath}`, activeFilePath)
     }
   }, [openFiles, activeFilePath, activePath])
+
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault()
+    const startY = e.clientY
+    const startH = panelHeight
+    setResizing(true)
+    document.body.style.cursor = 'row-resize'
+    const move = (ev: MouseEvent) => {
+      const h = startH + (startY - ev.clientY)
+      setPanelHeight(Math.min(Math.max(h, 120), window.innerHeight - 200))
+    }
+    const up = () => {
+      window.removeEventListener('mousemove', move)
+      window.removeEventListener('mouseup', up)
+      document.body.style.cursor = ''
+      setResizing(false)
+    }
+    window.addEventListener('mousemove', move)
+    window.addEventListener('mouseup', up)
+  }
 
   const refreshPreview = useCallback(() => {
     setPreviewKey((k) => k + 1)
@@ -275,16 +316,17 @@ function App() {
   }, [activeFilePath])
 
   const isPreviewable = activeFilePath && ['html', 'htm'].includes(activeFilePath.split('.').pop() || '')
+  const dirtyCount = openFiles.filter((f) => f.content !== f.savedContent).length
+  const workspaceName = activePath ? activePath.split(/[/\\]/).pop() : ''
 
   const sidebarExtra = sidebarView === 'files' ? (
     <FileExplorer activePath={activePath} onOpenFile={openFile} refreshKey={refreshKey} />
   ) : sidebarView === 'git' ? (
     <GitPanel activePath={activePath} refreshKey={refreshKey} />
   ) : sidebarView === 'settings' ? (
-    <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ fontSize: '13px', color: 'var(--tc-primary)', fontWeight: 600 }}>Configuration</div>
-
-      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)', marginTop: 8 }}>GitHub Token</label>
+    <div style={{ padding: '8px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={styles.settingTitle}>GitHub</div>
+      <label style={styles.label}>Token d'accès personnel</label>
       <input
         type="password"
         value={githubToken}
@@ -294,7 +336,7 @@ function App() {
       />
       <button onClick={connectGitHub} style={styles.btn}>{isTokenValid ? '✓ GitHub connecté' : 'Connecter GitHub'}</button>
 
-      <label style={{ fontSize: '12px', color: 'var(--tc-text-muted)' }}>Repo actif</label>
+      <label style={styles.label}>Repo actif</label>
       <select
         value={selectedRepo || ''}
         onChange={(e) => setSelectedRepo(e.target.value || null)}
@@ -306,12 +348,9 @@ function App() {
         ))}
       </select>
 
-      <button onClick={exportZip} style={{ ...styles.btn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }}>
-        📦 Exporter workspace
-      </button>
-      <button onClick={importZip} style={{ ...styles.btn, backgroundColor: 'var(--tc-bg-elevated)', color: 'var(--tc-primary)' }}>
-        📥 Importer ZIP
-      </button>
+      <div style={{ ...styles.settingTitle, marginTop: 12 }}>Workspace</div>
+      <button onClick={exportZip} style={styles.btnSecondary}>Exporter en ZIP</button>
+      <button onClick={importZip} style={styles.btnSecondary}>Importer un ZIP</button>
     </div>
   ) : null
 
@@ -329,29 +368,6 @@ function App() {
         onTogglePreview={() => setShowPreview((p) => !p)}
         previewOpen={showPreview}
       />
-
-      <div style={styles.titleBar}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ color: 'var(--tc-primary)', textShadow: '0 0 10px rgba(0,255,65,0.5)', fontWeight: 600 }}>
-            TrappistCode IDE
-          </span>
-          <span style={{ ...styles.badge, color: backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)', borderColor: backendOk ? 'var(--tc-primary)' : 'var(--tc-danger)' }}>
-            {backendOk ? '● backend' : '○ backend OFF'}
-          </span>
-          {activePath && <span style={{ ...styles.badge, color: 'var(--tc-text-muted)' }} title={activePath}>📁 {activePath.split(/[/\\]/).pop()}</span>}
-          {isTokenValid && <span style={{ ...styles.badge, color: '#58a6ff', borderColor: '#58a6ff' }}>🐙 GitHub</span>}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {isPreviewable && (
-            <button onClick={() => setShowPreview((p) => !p)} style={styles.topBtn}>
-              {showPreview ? '✕ Preview' : '▣ Preview'}
-            </button>
-          )}
-          <button onClick={() => setShowBottom(!showBottom)} style={styles.topBtn}>
-            {showBottom ? '✕ Bottom' : 'Bottom'}
-          </button>
-        </div>
-      </div>
 
       <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
         <Sidebar
@@ -375,7 +391,7 @@ function App() {
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-            <div style={{ flex: showPreview ? 1 : 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
               <TabbedEditor
                 files={openFiles}
                 activePath={activeFilePath}
@@ -389,14 +405,17 @@ function App() {
 
             {showPreview && activePath && (
               <div style={{ width: '45%', borderLeft: '1px solid var(--tc-border)', display: 'flex', flexDirection: 'column' }}>
-                <div style={{ height: 28, backgroundColor: 'var(--tc-bg-soft)', borderBottom: '1px solid var(--tc-border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', fontSize: 11 }}>
-                  <span style={{ color: 'var(--tc-primary)' }}>Preview : {previewEntry}</span>
-                  <button onClick={() => setShowPreview(false)} style={styles.ctlBtn}>✕</button>
+                <div style={styles.previewHeader}>
+                  <span>Aperçu · {previewEntry}</span>
+                  <span style={{ display: 'flex', gap: 2 }}>
+                    <button onClick={refreshPreview} style={styles.iconBtn} title="Recharger">⟳</button>
+                    <button onClick={() => setShowPreview(false)} style={styles.iconBtn} title="Fermer">✕</button>
+                  </span>
                 </div>
                 <iframe
                   key={previewKey}
                   src={`http://localhost:4269/api/preview/${previewEntry}?base=${encodeURIComponent(activePath)}`}
-                  style={{ flex: 1, border: 'none', backgroundColor: '#fff' }}
+                  style={{ flex: 1, border: 'none', backgroundColor: '#fff', pointerEvents: resizing ? 'none' : 'auto' }}
                   title="preview"
                 />
               </div>
@@ -404,49 +423,75 @@ function App() {
           </div>
 
           {showBottom && (
-            <div style={{ height: '280px', borderTop: '1px solid var(--tc-border)', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
-              <div style={{ display: 'flex', backgroundColor: 'var(--tc-bg-elevated)', borderBottom: '1px solid var(--tc-border)' }}>
-                {(['agent', 'terminal'] as BottomTab[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setBottomTab(t)}
-                    style={{
-                      padding: '6px 14px',
-                      backgroundColor: bottomTab === t ? 'var(--tc-selected)' : 'transparent',
-                      color: bottomTab === t ? 'var(--tc-primary)' : 'var(--tc-text-muted)',
-                      border: 'none',
-                      borderRight: '1px solid var(--tc-border)',
-                      cursor: 'pointer',
-                      fontFamily: "'Courier New', Consolas, monospace",
-                      fontSize: '12px',
-                    }}
-                  >
-                    {t === 'agent' ? '🤖 Agent' : '⌨️ Terminal'}
-                  </button>
-                ))}
+            <div style={{ height: panelHeight, display: 'flex', flexDirection: 'column', flexShrink: 0, backgroundColor: 'var(--tc-panel)', borderTop: '1px solid var(--tc-border)', position: 'relative' }}>
+              <div
+                onMouseDown={startResize}
+                style={{ ...styles.resizer, backgroundColor: resizing ? 'var(--tc-primary)' : 'transparent' }}
+                title="Glisser pour redimensionner"
+              />
+              <div style={styles.panelTabs}>
+                <div style={{ display: 'flex' }}>
+                  {(['agent', 'terminal'] as BottomTab[]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setBottomTab(t)}
+                      style={{
+                        ...styles.panelTab,
+                        color: bottomTab === t ? '#e7e7e7' : 'var(--tc-text-muted)',
+                        borderBottom: bottomTab === t ? '1px solid #e7e7e7' : '1px solid transparent',
+                      }}
+                    >
+                      {t === 'agent' ? 'Agent' : 'Terminal'}
+                    </button>
+                  ))}
+                </div>
+                <button onClick={() => setShowBottom(false)} style={styles.iconBtn} title="Fermer le panneau (Ctrl+J)">✕</button>
               </div>
-              {bottomTab === 'agent' ? (
-                <AgentPanel
-                  githubToken={githubToken}
-                  isTokenValid={isTokenValid}
-                  selectedRepo={selectedRepo}
-                  openPath={activeFilePath}
-                  fileContent={activeContent}
-                  onApplyEdit={applyEdit}
-                  workspace={activePath}
-                />
-              ) : (
-                <TerminalPanel />
-              )}
+              <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                {bottomTab === 'agent' ? (
+                  <AgentPanel
+                    githubToken={githubToken}
+                    isTokenValid={isTokenValid}
+                    selectedRepo={selectedRepo}
+                    openPath={activeFilePath}
+                    fileContent={activeContent}
+                    onApplyEdit={applyEdit}
+                    workspace={activePath}
+                  />
+                ) : (
+                  <TerminalPanel />
+                )}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      <div style={styles.statusBar}>
-        <span>{activePath ? activePath : 'Aucun workspace'}</span>
-        {selectedRepo && <span>{selectedRepo}</span>}
-        {activeFilePath && <span>{activeFilePath}</span>}
+      <div style={{ ...styles.statusBar, backgroundColor: activePath ? '#007acc' : '#68217a' }}>
+        <div style={styles.statusSide}>
+          <span style={styles.statusItem} title={activePath || ''}>
+            {activePath ? `📁 ${workspaceName}` : 'Aucun dossier ouvert'}
+          </span>
+          <span
+            style={{ ...styles.statusItem, backgroundColor: backendOk === false ? '#c72e0f' : 'transparent' }}
+            title="Backend local (port 4269)"
+          >
+            {backendOk === null ? '… backend' : backendOk ? '● backend' : '⚠ backend OFF'}
+          </span>
+          {dirtyCount > 0 && <span style={styles.statusItem}>● {dirtyCount} non enregistré(s)</span>}
+          {isTokenValid && <span style={styles.statusItem}>GitHub{selectedRepo ? ` · ${selectedRepo}` : ''}</span>}
+        </div>
+        <div style={styles.statusSide}>
+          {activeFilePath && <span style={styles.statusItem}>{activeFilePath}</span>}
+          {isPreviewable && (
+            <button onClick={() => setShowPreview((p) => !p)} style={styles.statusBtn}>
+              {showPreview ? "Masquer l'aperçu" : 'Aperçu'}
+            </button>
+          )}
+          <button onClick={() => setShowBottom((s) => !s)} style={styles.statusBtn} title="Ctrl+J">
+            {showBottom ? 'Masquer le panneau' : 'Panneau'}
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -459,97 +504,138 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100vh',
     backgroundColor: 'var(--tc-bg)',
     color: 'var(--tc-text)',
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontFamily: 'var(--tc-font-ui)',
     overflow: 'hidden',
   },
-  titleBar: {
-    height: '40px',
-    backgroundColor: 'var(--tc-bg-soft)',
+  resizer: {
+    position: 'absolute',
+    top: -3,
+    left: 0,
+    right: 0,
+    height: 5,
+    cursor: 'row-resize',
+    zIndex: 10,
+  },
+  panelTabs: {
+    height: 35,
     display: 'flex',
     alignItems: 'center',
-    padding: '0 12px',
-    fontSize: '13px',
-    flexShrink: 0,
-    borderBottom: '1px solid var(--tc-border)',
     justifyContent: 'space-between',
+    padding: '0 8px 0 4px',
+    flexShrink: 0,
   },
-  badge: {
-    fontSize: '10px',
-    padding: '2px 8px',
-    borderRadius: '12px',
-    border: '1px solid var(--tc-border)',
+  panelTab: {
+    background: 'transparent',
+    border: 'none',
+    padding: '6px 10px 4px',
+    margin: '0 2px',
+    cursor: 'pointer',
+    fontSize: 11,
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
   },
-  topBtn: {
-    backgroundColor: 'var(--tc-bg-elevated)',
-    color: 'var(--tc-primary)',
-    border: '1px solid var(--tc-border)',
-    borderRadius: '4px',
-    padding: '4px 10px',
-    cursor: 'pointer',
-    fontSize: '11px',
-    fontFamily: "'Courier New', Consolas, monospace",
-  },
-  ctlBtn: {
+  iconBtn: {
     background: 'transparent',
-    border: '1px solid var(--tc-border)',
-    color: 'var(--tc-primary)',
+    border: 'none',
+    color: 'var(--tc-text-muted)',
     cursor: 'pointer',
-    fontSize: '10px',
-    padding: '2px 6px',
+    fontSize: 13,
+    width: 24,
+    height: 22,
+    borderRadius: 4,
   },
-  check: {
+  previewHeader: {
+    height: 35,
+    backgroundColor: 'var(--tc-bg-soft)',
     display: 'flex',
     alignItems: 'center',
-    gap: '6px',
-    fontSize: '12px',
+    justifyContent: 'space-between',
+    padding: '0 8px 0 12px',
+    fontSize: 13,
     color: 'var(--tc-text)',
-    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  settingTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: '#e7e7e7',
+  },
+  label: {
+    fontSize: 12,
+    color: 'var(--tc-text-muted)',
   },
   input: {
-    backgroundColor: 'var(--tc-bg-elevated)',
+    backgroundColor: 'var(--tc-input)',
     color: 'var(--tc-text)',
-    border: '1px solid var(--tc-border)',
-    borderRadius: '4px',
-    padding: '6px',
-    fontFamily: "'Courier New', Consolas, monospace",
+    border: '1px solid transparent',
+    borderRadius: 2,
+    padding: '4px 6px',
+    fontSize: 13,
   },
   btn: {
     backgroundColor: 'var(--tc-primary)',
-    color: 'var(--tc-bg)',
+    color: 'var(--tc-on-primary)',
     border: 'none',
-    borderRadius: '4px',
-    padding: '6px',
+    borderRadius: 2,
+    padding: '5px 8px',
     cursor: 'pointer',
-    fontWeight: 600,
-    fontFamily: "'Courier New', Consolas, monospace",
+    fontSize: 13,
+  },
+  btnSecondary: {
+    backgroundColor: '#3a3d41',
+    color: '#ffffff',
+    border: 'none',
+    borderRadius: 2,
+    padding: '5px 8px',
+    cursor: 'pointer',
+    fontSize: 13,
   },
   toast: {
     position: 'fixed',
-    top: 80,
-    left: '50%',
-    transform: 'translateX(-50%)',
-    backgroundColor: 'var(--tc-bg-elevated)',
-    color: 'var(--tc-primary)',
-    border: '1px solid var(--tc-border)',
-    borderRadius: '6px',
-    padding: '10px 18px',
+    bottom: 34,
+    right: 16,
+    maxWidth: 420,
+    backgroundColor: '#252526',
+    color: 'var(--tc-text)',
+    border: '1px solid #454545',
+    borderLeft: '3px solid var(--tc-primary)',
+    padding: '10px 14px',
     zIndex: 9999,
-    fontSize: '12px',
-    boxShadow: '0 0 20px rgba(0,255,65,0.2)',
+    fontSize: 13,
+    boxShadow: '0 2px 8px rgba(0,0,0,0.6)',
   },
   statusBar: {
-    height: '24px',
-    backgroundColor: 'var(--tc-bg-elevated)',
-    color: 'var(--tc-primary)',
-    fontSize: '11px',
+    height: 22,
+    color: '#ffffff',
+    fontSize: 12,
     display: 'flex',
     alignItems: 'center',
-    padding: '0 16px',
-    gap: '16px',
+    justifyContent: 'space-between',
     flexShrink: 0,
-    borderTop: '1px solid var(--tc-border)',
+  },
+  statusSide: {
+    display: 'flex',
+    alignItems: 'center',
+    height: '100%',
+    minWidth: 0,
+  },
+  statusItem: {
+    padding: '0 8px',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  statusBtn: {
+    background: 'transparent',
+    border: 'none',
+    color: '#ffffff',
+    fontSize: 12,
+    padding: '0 8px',
+    height: '100%',
+    cursor: 'pointer',
   },
 }
 
