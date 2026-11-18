@@ -1,83 +1,92 @@
 import { Router } from 'express'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { requireBase } from '../lib/workspace.js'
+import { decodeBase, isInside } from '../lib/workspace.js'
 
 const router = Router()
+const PREFIX = '/api/preview/w'
 
 const MIME = {
-  '.html': 'text/html',
-  '.js': 'text/javascript',
-  '.mjs': 'text/javascript',
-  '.ts': 'application/typescript',
-  '.jsx': 'text/javascript',
-  '.tsx': 'text/javascript',
-  '.css': 'text/css',
-  '.json': 'application/json',
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.jsx': 'text/javascript; charset=utf-8',
+  '.ts': 'text/javascript; charset=utf-8',
+  '.tsx': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
-  '.md': 'text/markdown',
-  '.txt': 'text/plain',
-  '.py': 'text/x-python',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.wasm': 'application/wasm',
+  '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
 }
 
 function getMime(filePath) {
-  const ext = path.extname(filePath).toLowerCase()
-  return MIME[ext] || 'application/octet-stream'
+  return MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
 }
 
-function normalizeHtmlPaths(html, baseHref) {
-  if (!html) return html
-  const base = baseHref.endsWith('/') ? baseHref : baseHref + '/'
+const encodeB64 = (s) => Buffer.from(s, 'utf-8').toString('base64url')
+const decodeB64 = (s) => {
+  try { return Buffer.from(s, 'base64url').toString('utf-8') } catch { return null }
+}
 
-  const absReplacer = (full, attr, quote, val) => {
-    if (!val || val.startsWith('http') || val.startsWith('//') || val.startsWith('data:') || val.startsWith('#')) {
-      return full
-    }
-    if (val.startsWith('/')) {
-      const rel = val.slice(1)
-      return `${attr}=${quote}${base}${rel}${quote}`
-    }
-    return full
+// Les chemins absolus "/style.css" pointent vers la racine du workspace
+function normalizeHtmlPaths(html, prefix) {
+  return html.replace(/\b(href|src)=(["'])\/(?!\/)([^"']*)\2/gi, (_m, attr, q, rel) => `${attr}=${q}${prefix}/${rel}${q}`)
+}
+
+async function serve(base, relPath, prefix, res) {
+  let target = relPath || 'index.html'
+  if (!isInside(base, target)) return res.status(403).send('Forbidden')
+  let filePath = path.resolve(base, target)
+
+  const stat = await fs.stat(filePath)
+  if (stat.isDirectory()) filePath = path.join(filePath, 'index.html')
+
+  const ext = path.extname(filePath).toLowerCase()
+  const content = await fs.readFile(filePath)
+  res.setHeader('Cache-Control', 'no-store')
+  res.setHeader('Content-Type', getMime(filePath))
+
+  if (ext === '.html' || ext === '.htm') {
+    return res.send(normalizeHtmlPaths(content.toString('utf-8'), prefix))
   }
-
-  html = html.replace(/(href|src)(=)(["'])([^"']+)\3/g, absReplacer)
-  return html
+  res.send(content)
 }
 
 router.get('/*', async (req, res) => {
   try {
-    const base = requireBase(req, res)
-    if (!base) return
-    let target = req.path.startsWith('/') ? req.path.slice(1) : req.path
-    if (!target || target === '') {
-      target = 'index.html'
-    }
-    const filePath = path.resolve(base, target)
-    if (!filePath.startsWith(base) && !filePath.toLowerCase().startsWith(base.toLowerCase())) {
-      return res.status(403).send('Forbidden')
-    }
+    const segments = req.path.split('/').filter(Boolean).map((s) => {
+      try { return decodeURIComponent(s) } catch { return s }
+    })
 
-    const ext = path.extname(filePath).toLowerCase()
-    const content = await fs.readFile(filePath)
-
-    if (ext === '.html' || ext === '.htm') {
-      const html = content.toString('utf-8')
-      const normalized = normalizeHtmlPaths(html, '/api/preview/')
-      res.setHeader('Content-Type', 'text/html; charset=utf-8')
-      return res.send(normalized)
+    // Nouveau format : /api/preview/w/<base64url(workspace)>/chemin/fichier
+    if (segments[0] === 'w' && segments[1]) {
+      const base = decodeBase(decodeB64(segments[1]))
+      if (!base) return res.status(400).send('workspace invalide')
+      const rel = segments.slice(2).join('/')
+      return await serve(base, rel, `${PREFIX}/${segments[1]}`, res)
     }
 
-    res.setHeader('Content-Type', getMime(filePath))
-    res.send(content)
+    // Ancien format : /api/preview/fichier?base=... -> redirection vers le nouveau
+    const base = decodeBase(req.query?.base)
+    if (!base) return res.status(400).send('workspace base required')
+    const rel = segments.map(encodeURIComponent).join('/')
+    return res.redirect(302, `${PREFIX}/${encodeB64(base)}/${rel}`)
   } catch (e) {
-    if (e.code === 'ENOENT') {
-      return res.status(404).send('Not found')
-    }
+    if (e.code === 'ENOENT') return res.status(404).send('Not found')
     res.status(500).send(e.message || String(e))
   }
 })
