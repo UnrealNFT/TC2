@@ -10,7 +10,7 @@ export interface OpenFile {
   savedContent: string
 }
 
-export type SidebarView = 'files' | 'git' | 'projects' | 'settings'
+export type SidebarView = 'files' | 'git' | 'settings'
 
 export interface Workspace {
   path: string

@@ -2,7 +2,6 @@ import type React from 'react'
 import { useState, useCallback, useEffect, useMemo } from 'react'
 import { MenuBar } from './components/MenuBar'
 import { Sidebar } from './components/Sidebar'
-import { ProjectExplorer } from './components/ProjectExplorer'
 import { FileExplorer } from './components/FileExplorer'
 import { GitPanel } from './components/GitPanel'
 import { TabbedEditor } from './components/TabbedEditor'
@@ -22,7 +21,7 @@ const PANEL_H_KEY = 'trappistcode-panel-height'
 function App() {
   const { workspaces, activePath, addWorkspace, removeWorkspace, setActive } = useWorkspace()
   const { repos, fetchRepos } = useGitHubRepos()
-  const [sidebarView, setSidebarView] = useState<SidebarView>('projects')
+  const [sidebarView, setSidebarView] = useState<SidebarView>('files')
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -379,14 +378,7 @@ function App() {
           onNewProject={handleNewProject}
           onSelectWorkspace={handleSelectWorkspace}
           onRemoveWorkspace={removeWorkspace}
-          extra={sidebarView === 'projects' ? (
-            <ProjectExplorer
-              activePath={activePath}
-              onSelectProject={handleSelectWorkspace}
-              onNewProject={handleNewProject}
-              refreshKey={refreshKey}
-            />
-          ) : sidebarExtra}
+          extra={sidebarExtra}
         />
 
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>

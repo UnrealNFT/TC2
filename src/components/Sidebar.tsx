@@ -22,19 +22,17 @@ const svg = (children: React.ReactNode) => (
 
 const ICONS: Record<SidebarView, React.ReactNode> = {
   files: svg(<><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></>),
-  projects: svg(<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />),
   git: svg(<><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10" /><path d="M18 9c0 5-7 4-11.5 8.5" /></>),
   settings: svg(<><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1L7 17M17 7l2.1-2.1" /></>),
 }
 
 const TITLES: Record<SidebarView, string> = {
   files: 'Explorateur',
-  projects: 'Projets',
   git: 'Contrôle de code source',
   settings: 'Paramètres',
 }
 
-const TOP: SidebarView[] = ['files', 'projects', 'git']
+const TOP: SidebarView[] = ['files', 'git']
 
 export function Sidebar({ view, onChangeView, extra }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false)
