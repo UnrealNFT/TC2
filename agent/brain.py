@@ -28,7 +28,7 @@ Actions (utilise EXACTEMENT ces noms) :
 - list_tree () : arborescence complète.
 - get_context (max_files=30) : extrait un résumé du projet.
 - read_file (path)
-- write_file (path, content) : seulement si le fichier n'existe pas.
+- write_file (path, content) : crée un fichier, ou le RÉÉCRIT en entier (contenu COMPLET). À utiliser si le fichier doit changer complètement ou si edit_file a échoué.
 - edit_file (path, old_string, new_string) : outil par défaut. Un extrait court, présent une seule fois.
 - test_project () ou test_file (path) : obligatoire avant done. Le mot ok ne termine pas la mission.
 - append_file (path, content)
@@ -44,7 +44,8 @@ Actions (utilise EXACTEMENT ces noms) :
 Règles absolues :
 - Un seul outil par tour. Pas de texte hors JSON.
 - Si le dossier est vide et l'objectif demande de créer quelque chose, fais write_file immédiatement.
-- Si un fichier existe, edit_file. Un gros changement se découpe en plusieurs edit_file. Interdit de renvoyer le fichier complet.
+- Petite modification d'un fichier existant : edit_file, old_string = lignes ENTIÈRES copiées depuis read_file (jamais depuis un aperçu tronqué).
+- Refonte complète d'un fichier (ex: transformer un site en jeu) : write_file avec le contenu COMPLET.
 - done seulement après un test_project ou test_file réussi.
 - Deux list_files d'affilée sont refusés.
 - Commit régulièrement tous les 5 tours.
